@@ -10,8 +10,9 @@ factor analysis, teaching simulations, and data utilities — the
 graphics rendered with plotly.
 
 > **New to Python?** See the step-by-step
-> **[Getting Started guide](docs/getting-started.md)** — Google Colab
-> or Miniconda, from zero to your first chart. Written for students.
+> **[Getting Started guide](https://github.com/dgerbing/lessPython/blob/main/docs/getting-started.md)**
+> — Google Colab or Miniconda, from zero to your first chart. Written
+> for students.
 
 Install as `lessPython`, import as `lessPy`:
 

@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lessPython"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python port of R's lessR: analytic-view visualizations, statistical models, and data utilities, rendered with plotly"
 authors = [{ name = "David W. Gerbing", email = "gerbing@pdx.edu" }]
 readme = "README.md"
@@ -50,7 +50,9 @@ dependencies = [
 dev = ["pytest", "kaleido"]
 
 [project.urls]
-Homepage = "https://pypi.org/project/lessPython/"
+Homepage = "https://github.com/dgerbing/lessPython"
+Repository = "https://github.com/dgerbing/lessPython"
+Documentation = "https://github.com/dgerbing/lessPython/blob/main/docs/getting-started.md"
 "Source (lessR)" = "https://cran.r-project.org/package=lessR"
 
 [tool.setuptools.packages.find]
