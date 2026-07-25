@@ -1,0 +1,33 @@
+# Build artifacts
+/dist/
+/build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Caches / OS / editor
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+iframe_figures/
+*.swp
+*.swo
+
+# Local-only, not part of the public repo
+/placeholder-lessPython/
+/RtoPython/
+/test1_cars93.ipynb
+/test2_chart_bars.ipynb
+/test3_chart_treemap_icicle.ipynb
+/test4_chart_pie_radar.ipynb
+/test5_X_and_index.ipynb
+/test6_XY_relationships.ipynb
+/test7_XY_aggregates.ipynb
+/testMore1.ipynb
+/testPrelim.ipynb
+/LogisticRmd.pdf
+/PyPIupload.txt
+/PyConvertPrompt.txt
+/runPython.txt
+/testDocs.txt
+/WidgetVsPng.txt

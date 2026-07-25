@@ -1,0 +1,61 @@
+# Python analog of DESCRIPTION
+#
+# Name decided July 2026: distribution name lessPython (verified
+# free on PyPI), import name lessPy. So: pip install lessPython,
+# then import lessPy. ("lesspy" is taken on PyPI by an abandoned
+# 2011 LESS/CSS compiler; PyPI names are case-insensitive, so
+# lessPy itself was unavailable as the pip name.)
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lessPython"
+version = "0.1.0"
+description = "Python port of R's lessR: analytic-view visualizations, statistical models, and data utilities, rendered with plotly"
+authors = [{ name = "David W. Gerbing", email = "gerbing@pdx.edu" }]
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
+keywords = [
+  "visualization", "statistics", "plotly", "regression", "anova",
+  "factor-analysis", "data-analysis", "lessR",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Education",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Visualization",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "plotly>=5.20",
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "scipy>=1.10",
+  # core: Regression(), Logit(), ANOVA() and XY() forecasting all
+  # use statsmodels (imported lazily, but a hard dependency)
+  "statsmodels>=0.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "kaleido"]
+
+[project.urls]
+Homepage = "https://pypi.org/project/lessPython/"
+"Source (lessR)" = "https://cran.r-project.org/package=lessR"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# bundle the example datasets (the analog of lessR's data/*.rda)
+lessPy = ["data/*.csv"]
