@@ -728,3 +728,93 @@ def test_facet_titles_use_across_for_every_form(dfac):
     both = Chart("Dept", by="Gender", facet="Site", form="radar",
                  data=dfac).layout.title.text
     assert both == "Count of Dept by Gender across Site"
+
+
+# ----- profile: form="profile" ---------------------------------
+
+@pytest.fixture
+def warp():
+    """warpbreaks, the two-way design of R's ANOVA example, with
+    the tension levels in their R factor order."""
+    rng = np.random.default_rng(3)
+    rows = []
+    for wool in ("A", "B"):
+        for tension in ("L", "M", "H"):
+            for _ in range(9):
+                rows.append((wool, tension,
+                             float(rng.integers(10, 60))))
+    df = pd.DataFrame(rows, columns=["wool", "tension", "breaks"])
+    df["tension"] = pd.Categorical(df["tension"], ["L", "M", "H"])
+    return df
+
+
+def _profiles(fig):
+    return [t for t in fig.data if t.mode.startswith("lines")
+            or t.mode == "markers"]
+
+
+def test_profile_single(warp):
+    fig = Chart("tension", "breaks", stat="mean", form="profile",
+                data=warp)
+    tr = _profiles(fig)
+    assert len(tr) == 1
+    assert tr[0].mode == "lines+markers"   # segments on by default
+    assert not tr[0].showlegend
+    assert list(tr[0].x) == ["L", "M", "H"]
+    want = warp.groupby("tension", observed=True)["breaks"].mean()
+    assert list(tr[0].y) == pytest.approx(
+        [want[c] for c in tr[0].x])
+    assert fig.layout.yaxis.title.text == "Mean of breaks"
+
+
+def test_profile_by_is_interaction_plot(warp):
+    # one profile per by level: the ANOVA interaction plot
+    fig = Chart("wool", "breaks", stat="mean", by="tension",
+                form="profile", data=warp)
+    tr = _profiles(fig)
+    assert len(tr) == 3
+    assert [t.name for t in tr] == ["L", "M", "H"]
+    assert all(t.showlegend for t in tr)
+    assert fig.layout.legend.title.text == "tension"
+    cell = (warp.groupby(["tension", "wool"], observed=True)
+            ["breaks"].mean())
+    for t in tr:
+        for c, v in zip(t.x, t.y):
+            assert float(v) == pytest.approx(cell[(t.name, c)])
+
+
+def test_profile_counts(warp):
+    fig = Chart("tension", form="profile", data=warp)
+    tr = _profiles(fig)
+    assert list(tr[0].y) == pytest.approx([18, 18, 18])
+    assert fig.layout.yaxis.title.text == "Count of tension"
+
+
+def test_profile_segments_off(warp):
+    fig = Chart("tension", "breaks", stat="mean", form="profile",
+                segments=False, data=warp)
+    assert _profiles(fig)[0].mode == "markers"
+
+
+def test_profile_keeps_data_order(warp):
+    # the segments assert an ordering, so a plain column keeps the
+    # order the data present it in, not the alphabetical order a
+    # frequency table would impose
+    plain = warp.assign(tension=warp["tension"].astype(str))
+    prof = Chart("tension", "breaks", stat="mean", form="profile",
+                 data=plain)
+    assert list(_profiles(prof)[0].x) == ["L", "M", "H"]
+    # every other form still alphabetizes
+    bar = Chart("tension", "breaks", stat="mean", data=plain)
+    assert list(bar.data[0].x) == ["H", "L", "M"]
+
+
+def test_profile_errors(warp):
+    with pytest.raises(ValueError, match="form=\"profile\""):
+        Chart("tension", data=warp, segments=True)
+    with pytest.raises(ValueError, match="not yet ported"):
+        Chart("wool", "breaks", stat="mean", form="profile",
+              facet="tension", data=warp)
+    with pytest.raises(ValueError, match="form=\"profile\""):
+        Chart("wool", "breaks", stat="mean", form="profile",
+              horiz=True, data=warp)

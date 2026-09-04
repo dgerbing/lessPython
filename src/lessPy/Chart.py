@@ -15,6 +15,10 @@
 # treemap, icicle — plus "sunburst", which (as in R) is an alias
 # for pie; pie with by= renders as a sunburst via the hier path.
 #
+# form="profile" plots one point per level of x and connects them
+# across the levels. With by= each group draws its own profile,
+# the interaction plot of a two-way design.
+#
 # facet= draws one panel per facet level: a grid of panels for
 # dot, radar, bubble (1-D), and the hier forms; the pie grid for
 # a plain pie (facet becomes the grouping, as in R); and for bar
@@ -35,6 +39,7 @@ from .hier_plotly import (
     hier_aggregate, hier_color_resolve, hier_plotly,
 )
 from .pie_plotly import pie_plotly
+from .profile_plotly import profile_plotly
 from .radar_plotly import radar_plotly
 from .plotly_utils import build_title, font_scaled
 from .stats_out import chart_stats, resolve_quiet
@@ -106,7 +111,8 @@ def _facet_table(x_s, y_s, by_s, stat, is_agg, x_order, by_order,
     return (t.reindex(index=by_order, columns=x_order)
             .fillna(0))
 
-_FORMS = ("bar", "radar", "bubble", "dot", "pie", "icicle", "treemap")
+_FORMS = ("bar", "radar", "bubble", "dot", "profile", "pie",
+          "icicle", "treemap")
 _STATS = ("mean", "sum", "sd", "deviation", "min", "median", "max")
 _SORTS = ("0", "-", "+")
 
@@ -167,7 +173,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
           hole=0.65,
           radius=0.50, power=0.5,
           pt_size=1, origin_x=None, origin_y=None,
-          segments_x=None, segments_y=None,
+          segments_x=None, segments_y=None, segments=None,
           stat=None, stat_x="count",
           horiz=False, sort="0", beside=False, stack100=False,
           gap=None, scale_y=None, break_x=None,
@@ -306,6 +312,20 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
                 "chart; a faceted (Trellis) bar chart has no by "
                 "variable and no legend")
 
+    if segments is not None and form != "profile":
+        raise ValueError(
+            'segments connects the points of a profile across the '
+            'levels of x, so it needs form="profile". For the dot '
+            "chart's stems, see segments_x and segments_y")
+    if form == "profile":
+        if facet is not None:
+            raise ValueError(
+                "the faceted profile is not yet ported; use by= "
+                "for one profile per group in a single panel")
+        if stack100 or beside or horiz:
+            raise ValueError(
+                "stack100, beside, and horiz shape the bars of a "
+                'bar chart, so they do not apply to form="profile"')
     if (n_row is not None or n_col is not None) and facet is None:
         raise ValueError("n_row and n_col lay out facet panels, "
                          "so they require a facet variable")
@@ -450,6 +470,14 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             facet_ser = facet_ser + " / " + c[keep].astype(str)
 
     x_order = _category_order(x_ser)
+    # A frequency table alphabetizes its categories, which is what
+    # category_order gives a plain column. The profile's segments
+    # assert an ordering of that axis, so the categories keep the
+    # order the data present them in, as they would were the column
+    # a Categorical. R analog: Chart.R form="profile", x.lev
+    if form == "profile" and not isinstance(x_ser.dtype,
+                                            pd.CategoricalDtype):
+        x_order = list(pd.unique(x_ser.dropna()))
     by_order = _category_order(by_ser) if by_ser is not None else None
     facet_order = (_category_order(facet_ser)
                    if facet_ser is not None else None)
@@ -985,6 +1013,31 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             rotate_x=rotate_x, rotate_y=rotate_y,
             segments_x=True if segments_x is None else segments_x,
             segments_y=True if segments_y is None else segments_y,
+        )
+
+    if form == "profile":
+        # tbl: a Series over the x categories, or a DataFrame with
+        # one row per by group. The connecting segments are the
+        # point of the form, so they are on unless turned off.
+        # R analog: Chart.R form="profile" -> .plt.main(cat.x=TRUE)
+        if main is None:
+            main = build_title(x, by_name=by, y_name=y_name,
+                               stat=stat)
+        elif main == "":
+            main = None
+        return profile_plotly(
+            tbl,
+            x_name=x, by_name=by,
+            fill=fill, border=color, pt_size=pt_size,
+            segments=True if segments is None else segments,
+            main=main,
+            x_lab=x if xlab is None else xlab,
+            y_lab=ylab,                # set with tbl above
+            digits_d=digits_d,
+            axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+            axis_y_pre=axis_y_pre,
+            rotate_x=rotate_x, rotate_y=rotate_y,
+            transparency=transparency,
         )
 
     if form == "pie":

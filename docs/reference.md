@@ -93,7 +93,11 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   `y`, the numeric variable being aggregated, so a second
   categorical variable is named: `by='Gender'`. Forms: bar,
   pie/sunburst, dot, radar,
-  bubble, treemap, icicle. Numeric bars can be colored by value:
+  bubble, profile, treemap, icicle. `form='profile'` plots one
+  point per level of `x` and connects them across the levels;
+  with `by=` each group draws its own profile, the interaction
+  plot of a two-way design, and `segments=False` leaves the
+  points unconnected. Numeric bars can be colored by value:
   `fill_split=v` (two colors split at `v`) or `fill_scaled=True`
   (an HCL gradient by distance from the split). `theme=` (green,
   slatered, sienna, blue, …) fills with a sequential palette in the
@@ -281,6 +285,7 @@ figure.
   · **`hier_plotly`** — sunburst / treemap / icicle
 - **`bubble_plotly`** — bubble plot · **`radar_plotly`** — radar
   · **`dot_plotly`** — dot / Cleveland plot
+  · **`profile_plotly`** — profile / interaction plot
 - **`hs_plotly`** — histogram · **`dn_plotly`** — density ·
   **`freq_poly_plotly`** — frequency polygon
 - **`vbs_plotly`** — violin / box / scatter composite ·
