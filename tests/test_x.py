@@ -211,6 +211,24 @@ def test_kind_both(d):
     assert len(lines) == 3
 
 
+def test_kind_normal_default_fill(d):
+    # the normal curve carries R's own fill, X.R density
+    # fill_normal = rgb(250,210,230, alpha=80)
+    fig = X("Salary", data=d, form="density", kind="normal",
+            show_histogram=False)
+    curve = max((t for t in fig.data if t.type == "scatter"
+                 and t.mode == "lines"), key=lambda t: len(t.x))
+    assert curve.fill == "tozeroy"
+    assert curve.fillcolor == "rgba(250,210,230,0.314)"
+
+    # "transparent" leaves the curve unfilled
+    f2 = X("Salary", data=d, form="density", kind="normal",
+           fill_normal="transparent", show_histogram=False)
+    c2 = max((t for t in f2.data if t.type == "scatter"
+              and t.mode == "lines"), key=lambda t: len(t.x))
+    assert c2.fill == "none"
+
+
 def test_kind_shapiro_console(d, capsys):
     X("Salary", data=d, form="density", kind="both")
     out = capsys.readouterr().out

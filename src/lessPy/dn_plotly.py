@@ -57,6 +57,12 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
     if fill_miss:
         # R analog: X.R density default fill rgb(80,150,200)
         fill = "#5096C8"
+    if fill_normal is None:
+        # R analog: X.R density, the normal curve's own fill,
+        # rgb(250,210,230, alpha=80), whose alpha is fixed rather
+        # than taken from auto_opacity as the general fill's is.
+        # Pass "transparent" for an unfilled normal curve
+        fill_normal = "#FAD2E650"
 
     x = np.asarray(x, dtype=float)
     if bw is None:
