@@ -177,10 +177,11 @@ def X(x, by=None, facet=None, data=None, filter=None,
         raise ValueError(
             "counts labels apply to a single histogram: "
             "no by= or facet=")
-    if (kind != "general" or rug) and by is not None:
+    # kind= now fits a normal to each by group (dn_plotly), but the
+    # rug still marks the values of one series
+    if rug and by is not None:
         raise ValueError(
-            "kind and rug draw per-panel curves of a single "
-            "series: no by=")
+            "the rug marks the values of a single series: no by=")
     if (out_cut > 0 or box_adj) and form not in _VBS_FORMS:
         raise ValueError(
             "out_cut and box_adj apply to the VBS forms: "

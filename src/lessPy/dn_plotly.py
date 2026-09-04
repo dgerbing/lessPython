@@ -4,6 +4,11 @@
 # data, with a vertical line at each group's mean. Optional by=
 # overlays one translucent curve per group with a legend.
 #
+# kind= adds the fitted normal curve ("normal") or draws it with
+# the general curve ("both"), as in dn.plotly.R. With by=, the
+# normal is fit to each group separately and drawn dashed in that
+# group's color.
+#
 # The KDE itself is computed here with numpy (R uses stats::density;
 # the bandwidth arrives from X() via bw_nrd0, R's default rule), on
 # a shared grid of n points extended cut*bw beyond the data range —
@@ -140,12 +145,22 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
     # R analog: dn.main.R — kind "normal"/"both" adds the normal
     # curve at the sample mean and sd; show_histogram draws a
     # faint density-scaled histogram behind the curves
+    # one normal per group, each at its own mean and sd, so that a
+    # by= display carries a normal for every series it overlays
     d_nrm = None
     if kind in ("normal", "both"):
-        xg0 = group_x(groups[0])
-        mu, sd = float(xg0.mean()), float(xg0.std(ddof=1))
-        z = (grid - mu) / sd
-        d_nrm = np.exp(-0.5 * z * z) / (sd * np.sqrt(2 * np.pi))
+        d_nrm = []
+        for gname in groups:
+            xg = group_x(gname)
+            sd = float(xg.std(ddof=1)) if len(xg) > 1 else 0.0
+            if not np.isfinite(sd) or sd <= 0:
+                # identical values have no normal to draw, and its
+                # infinite density would scale the axis for every group
+                d_nrm.append(np.full(len(grid), np.nan))
+                continue
+            z = (grid - float(xg.mean())) / sd
+            d_nrm.append(
+                np.exp(-0.5 * z * z) / (sd * np.sqrt(2 * np.pi)))
     hist_y = None
     if show_histogram and hist_edges is not None:
         e = np.asarray(hist_edges, dtype=float)
@@ -158,7 +173,9 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
     if kind == "normal":               # general curve not drawn
         ymax = 0.0
     if d_nrm is not None:
-        ymax = max(ymax, float(d_nrm.max()))
+        all_nrm = np.concatenate(d_nrm)
+        if np.any(np.isfinite(all_nrm)):
+            ymax = max(ymax, float(np.nanmax(all_nrm)))
     if hist_y is not None:
         ymax = max(ymax, float(hist_y.max()))
 
@@ -195,9 +212,9 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
                 if fill_hist is None else fill_hist),
                 line=dict(width=0)),
             hoverinfo="skip", showlegend=False))
-    if kind in ("general", "both"):
-        for g, gname in enumerate(groups):
-            d = dens[g]
+    for g, gname in enumerate(groups):
+        d = dens[g]
+        if kind in ("general", "both"):
             hv = hover(d)
             if G > 1 and by_name:
                 hv = [f"{by_name}: {gname}<br>{t}" for t in hv]
@@ -212,26 +229,42 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
                 hovertext=hv,
                 showlegend=G > 1,
             ))
-            # vertical line at the group mean, up to the curve
-            y_mn = float(np.interp(d["mn"], grid, d["y"]))
-            mean_line = dict(color=line_rgba[g], dash="dash",
-                             width=1.4 if fill_area else 0.7)
+        if d_nrm is not None:          # normal curve
+            # a single distribution keeps R's normal-curve colors; with
+            # groups the normal takes its group's color, dashed to set
+            # it apart from that group's general curve, and unfilled so
+            # that it does not cover the curves of the other groups
+            nrm_fill = (None if G > 1
+                        or fill_normal in (None, "transparent")
+                        else as_plotly_color(fill_normal))
+            fig.add_trace(go.Scatter(
+                mode="lines", x=grid, y=d_nrm[g],
+                name=(None if G == 1
+                      else f"{gname} normal" if kind == "both"
+                      else gname),
+                line=dict(
+                    color=(line_rgba[g] if G > 1
+                           else to_hex(color_normal)),
+                    width=1.35 if nrm_fill is None else 1,
+                    dash=("dash" if G > 1 and kind == "both"
+                          else "solid")),
+                fill="none" if nrm_fill is None else "tozeroy",
+                fillcolor=nrm_fill,
+                hoverinfo="skip",
+                showlegend=G > 1 and kind == "normal"))
+        # vertical line at the group mean, up to whichever curve is
+        # drawn, so that kind="normal" still marks the mean
+        y_crv = (d["y"] if kind in ("general", "both")
+                 else d_nrm[g])
+        y_mn = float(np.interp(d["mn"], grid, y_crv))
+        if np.isfinite(y_mn):
             fig.add_trace(go.Scatter(
                 mode="lines",
                 x=[d["mn"], d["mn"]], y=[0, y_mn],
-                line=mean_line,
+                line=dict(color=line_rgba[g], dash="dash",
+                          width=1.4 if fill_area else 0.7),
                 hoverinfo="skip", showlegend=False,
             ))
-    if d_nrm is not None:              # normal curve
-        nrm_fill = (None if fill_normal in (None, "transparent")
-                    else as_plotly_color(fill_normal))
-        fig.add_trace(go.Scatter(
-            mode="lines", x=grid, y=d_nrm,
-            line=dict(color=to_hex(color_normal),
-                      width=1.35 if nrm_fill is None else 1),
-            fill="none" if nrm_fill is None else "tozeroy",
-            fillcolor=nrm_fill,
-            hoverinfo="skip", showlegend=False))
     if rug:                            # ticks at each data value
         xr, yr = [], []
         y1r = -0.05 * ymax

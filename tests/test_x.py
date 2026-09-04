@@ -196,8 +196,9 @@ def test_kind_normal(d):
             show_histogram=False)
     lines = [t for t in fig.data if t.type == "scatter"
              and t.mode == "lines"]
-    assert len(lines) == 1             # normal curve only
-    area = np.trapezoid(lines[0].y, lines[0].x)
+    assert len(lines) == 2             # normal curve + mean line
+    curve = max(lines, key=lambda t: len(t.x))
+    area = np.trapezoid(curve.y, curve.x)
     assert area == pytest.approx(1.0, abs=0.02)
 
 
@@ -228,12 +229,46 @@ def test_rug_implies_density(d):
     assert ys.min() < 0                # ticks below the axis
 
 
-def test_kind_rug_no_by(d):
-    with pytest.raises(ValueError, match="no by="):
-        X("Salary", by="Gender", data=d, form="density",
-          kind="both")
+def test_rug_no_by(d):
     with pytest.raises(ValueError, match="no by="):
         X("Salary", by="Gender", data=d, rug=True)
+
+
+def _curves(fig):
+    """The density curves: line traces on the full grid, so the
+    two-point mean lines are left out."""
+    return [t for t in fig.data if t.type == "scatter"
+            and t.mode == "lines" and len(t.x) > 2]
+
+
+def test_kind_by_group_normals(d):
+    # one normal per by group, each fit to that group, drawn dashed
+    # in the group's color. R analog: dn.plotly.R kind with groups
+    fig = X("Salary", by="Gender", data=d, form="density",
+            kind="both")
+    curves = _curves(fig)
+    assert len(curves) == 4            # 2 general + 2 normal
+    dashed = [t for t in curves if t.line.dash == "dash"]
+    assert len(dashed) == 2
+    assert {t.name for t in dashed} == {"F normal", "M normal"}
+
+    for g in ("F", "M"):
+        sub = d.loc[d["Gender"] == g, "Salary"]
+        nrm = next(t for t in dashed if t.name.startswith(g))
+        peak = np.asarray(nrm.x)[int(np.argmax(nrm.y))]
+        # the normal peaks at its own group's mean
+        assert peak == pytest.approx(sub.mean(),
+                                     abs=0.05 * sub.std())
+
+
+def test_kind_normal_by_legend(d):
+    # with no general curve to key them, the normals carry the legend
+    fig = X("Salary", by="Gender", data=d, form="density",
+            kind="normal")
+    curves = _curves(fig)
+    assert len(curves) == 2
+    assert all(t.showlegend for t in curves)
+    assert {t.name for t in curves} == {"F", "M"}
 
 
 # ----- VBS refinements: box_adj / bw_iter / out_cut -------------
