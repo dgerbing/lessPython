@@ -130,6 +130,9 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   aggregation and forecasting). `x=".Index"` makes a run chart
   (the row number, 1..n); `show_runs=True` adds the runs test
   (connected points, a median center line, the run analysis).
+  `line_width=` sets the width of the segments that connect
+  adjacent points, wherever they are drawn — a time series, a run
+  chart, `show_runs` — with `line_width=0` for the points alone.
   `x` or `y="row_names"` plots against the data-frame row names as
   a Cleveland dot-plot axis. A categorical variable paired with
   `stat=` (e.g. `stat='mean'`) gives a Cleveland dot plot of the

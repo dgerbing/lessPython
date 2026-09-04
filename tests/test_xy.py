@@ -1091,3 +1091,62 @@ def test_row_names_dot_plot(d):
     import pytest
     with pytest.raises(ValueError, match="numerical"):
         XY("Gender", "row_names", data=d)
+
+
+# ----- line_width: the connecting segments ---------------------
+
+@pytest.fixture
+def ts():
+    """A short two-company time series over a Date x."""
+    days = pd.date_range("2024-01-31", periods=12, freq="ME")
+    rng = np.random.default_rng(5)
+    return pd.DataFrame({
+        "Month": list(days) * 2,
+        "Company": ["A"] * 12 + ["B"] * 12,
+        "Price": rng.uniform(20, 80, 24).round(2),
+    })
+
+
+def _line_widths(fig):
+    """Widths of every trace that draws connecting segments."""
+    return [t.line.width for t in fig.data
+            if "lines" in (getattr(t, "mode", None) or "")
+            and t.line is not None and t.line.width is not None]
+
+
+def test_line_width_default(ts):
+    one = ts[ts["Company"] == "A"]
+    assert _line_widths(XY("Month", "Price", data=one)) == [1.5]
+
+
+def test_line_width_set(ts):
+    one = ts[ts["Company"] == "A"]
+    for w in (0.5, 3, 4.25):
+        assert _line_widths(
+            XY("Month", "Price", data=one, line_width=w)) == [w]
+
+
+def test_line_width_zero_removes_segments(ts):
+    # R analog: .plt.main() tests  ln.width > 0
+    one = ts[ts["Company"] == "A"]
+    fig = XY("Month", "Price", data=one, line_width=0)
+    assert _line_widths(fig) == []
+
+
+def test_line_width_by_groups(ts):
+    # every series and its legend-only line sample
+    fig = XY("Month", "Price", by="Company", data=ts, line_width=3)
+    w = _line_widths(fig)
+    assert len(w) == 4                 # 2 series + 2 legend samples
+    assert set(w) == {3}
+
+
+def test_line_width_run_chart(d):
+    fig = XY(".Index", "Salary", data=d, line_width=4)
+    assert _line_widths(fig) == [4]
+
+
+def test_line_width_leaves_scatter_alone(d):
+    # a scatterplot connects nothing, so there is no line to widen
+    fig = XY("Years", "Salary", data=d, line_width=3)
+    assert _line_widths(fig) == []
