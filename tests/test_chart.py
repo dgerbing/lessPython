@@ -818,3 +818,49 @@ def test_profile_errors(warp):
     with pytest.raises(ValueError, match="form=\"profile\""):
         Chart("wool", "breaks", stat="mean", form="profile",
               horiz=True, data=warp)
+
+
+# ----- theme fills: the two-gray pair --------------------------
+
+def _lum(h):
+    h = h.lstrip("#")[:6]
+    r, g, b = (int(h[i:i+2], 16) for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def test_theme_gray_two_series_separated():
+    # two grays carry the whole distinction with no third value
+    # between them, so they are set further apart than the palette
+    # spaces them. R analog: the grays branch of .color_range()
+    from lessPy.Chart import _theme_fill
+    pair = _theme_fill("gray", 2)
+    assert pair == ["#B3B3B3", "#4D4D4D"]       # gray70, gray30 in R
+    span = abs(_lum(pair[0]) - _lum(pair[1]))
+    assert span == pytest.approx(102, abs=1)
+    # at least the separation the palette gives three grays
+    trio = _theme_fill("gray", 3)
+    assert span >= abs(_lum(trio[0]) - _lum(trio[-1])) - 1
+
+
+def test_theme_gray_other_counts_unchanged():
+    from lessPy.Chart import _theme_fill
+    from lessPy import getColors
+    for n in (3, 4, 5):
+        assert _theme_fill("gray", n) == [
+            c[:7] for c in getColors("grays", n=n, quiet=True)]
+
+
+def test_getcolors_grays_pair_unchanged():
+    # the palette itself is untouched; only the theme fill widens,
+    # as in R, where getColors() and .color_range() differ at n=2
+    from lessPy import getColors
+    assert [c[:7] for c in getColors("grays", n=2, quiet=True)] == \
+        ["#969696", "#444444"]
+
+
+def test_theme_gray_reaches_the_chart(d):
+    fig = Chart("Dept", by="Gender", theme="gray", data=d)
+    cols = {t.marker.color for t in fig.data
+            if getattr(t, "marker", None) is not None
+            and t.marker.color is not None}
+    assert cols == {"#B3B3B3", "#4D4D4D"}

@@ -72,7 +72,16 @@ def _theme_fill(theme, n):
             f"{', '.join(sorted(_THEME_PALETTE))}")
     from .getColors import getColors
     cols = getColors(pal, n=max(1, n), quiet=True)
-    return [c[:7] if len(c) == 9 else c for c in cols]  # drop alpha
+    cols = [c[:7] if len(c) == 9 else c for c in cols]  # drop alpha
+
+    # Two grays carry the whole distinction between the fill elements,
+    # with no third value between them to read against, so they are set
+    # apart further than the palette spaces them: a luminance span of
+    # 102, the span the palette gives three grays, rather than the 82 of
+    # #969696 and #444444. R analog: the grays branch of .color_range()
+    if pal == "grays" and n == 2:
+        cols = ["#B3B3B3", "#4D4D4D"]        # gray70, gray30 in R
+    return cols
 
 
 def _facet_table(x_s, y_s, by_s, stat, is_agg, x_order, by_order,
