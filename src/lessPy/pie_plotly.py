@@ -28,6 +28,9 @@ from .plotly_utils import (
 
 _LABEL_VALUES = ("%", "input", "prop", "off")
 
+# widest hole that still leaves room for a label inside the ring
+_HOLE_MAX = 0.62
+
 
 def _pick_by_names_or_recycle(v, needed_names):
     """dict: pick by slice name; else recycle across slices.
@@ -74,7 +77,7 @@ def _text_colors(labels_color, fills_rgba, panel_fill):
 
 def pie_plotly(x, x_name=None, y_name=None, by_name=None, main=None,
                fill=None, border=None, opacity=1.0,
-               hole=0.65, ncols=None,
+               hole=0.62, ncols=None,
                labels=None, labels_position="in",
                labels_color=None, labels_size=1.0,
                labels_decimals=None,
@@ -115,6 +118,16 @@ def pie_plotly(x, x_name=None, y_name=None, by_name=None, main=None,
     pos_in = labels_position is None or \
         str(labels_position).lower() == "in"
     txt_pos = "inside" if pos_in else "outside"
+
+    # Past _HOLE_MAX there is no room for a label inside the ring, so
+    #   honor the requested hole and drop the labels rather than
+    #   shrink the hole; announced once, for one pie or a grid
+    drop_labels = pos_in and hole > _HOLE_MAX
+    if drop_labels:
+        print(f"hole={hole} leaves no room for labels inside the "
+              "ring, so the slice labels are turned off.\n"
+              "  For labels with a hole this large, "
+              'set labels_position="out".')
     val_spec = f":.{max(0, int(digits_d))}f"
 
     def title_layout():
@@ -158,19 +171,16 @@ def pie_plotly(x, x_name=None, y_name=None, by_name=None, main=None,
 
         overall_pct = values / (tot if tot > 0 else 1)
 
-        # inside labels need room: clamp an over-large hole
-        hole_use = 0.62 if (pos_in and hole > 0.62) else hole
-
         font = dict(color=txt_colors, size=txt_size)
         fig = go.Figure(go.Pie(
             labels=slices,
             values=values,
             sort=False,
             direction="clockwise",
-            hole=hole_use,
+            hole=hole,
             domain=dict(x=[0, 1], y=[0.03, 0.93]),
             text=text_vec,
-            textinfo="text",
+            textinfo="none" if drop_labels else "text",
             textposition=txt_pos,
             insidetextorientation="radial",
             textfont=font,
@@ -250,7 +260,7 @@ def pie_plotly(x, x_name=None, y_name=None, by_name=None, main=None,
             hole=hole,
             domain=dom,
             text=text_vec,
-            textinfo="text",
+            textinfo="none" if drop_labels else "text",
             textposition=txt_pos,
             insidetextorientation="radial",
             textfont=font,

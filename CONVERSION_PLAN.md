@@ -901,3 +901,148 @@ for visual output (Cars93).
     (263 total). Regression() core is now complete except
     moderation (mod=), k-fold, new_scale=, the scatterplot
     matrix, and Rmd.
+
+39. **Chart() revision parity — in progress** (October 2026).
+    lessR's Chart() was revised Aug–Sep 2026 (NEWS.md 4.5.7)
+    after the July port. Working through the gaps in order:
+    - [x] treemap/icicle `fill=` a sequential palette name
+          ("greens") — was passed through as a literal color.
+          Ported R's pal_explicit branch of .hier_color_resolve
+          (shade read off the 256-color ramp by magnitude);
+          hex-identical to R for counts and stat="mean".
+          Python getColors has no "terrain", so that name is
+          not recognized here.
+    - [x] quick behaviors: stack100 axis "Proportion within X"
+          and column proportions printed in place of the
+          chi-square; beside+stat labels show the value (plotly
+          fits inside text itself; R's .fit.bar.labels is the
+          base-graphics path); pie hole default 0.62, honored
+          past 0.62 with labels off + R's message; numeric x with
+          >12 values prints the X() advisory; a list by= on a
+          non-hierarchical form raises R's channel message.
+          Empty factor levels were already dropped by every form.
+    - [x] console: chart_stats (stats_out.py) rewritten as ports
+          of R's printers — .ss.factor 1-D (horizontal, vertical
+          past 80 cols, chi-square of equal probabilities,
+          "Missing Values: n" counted before casewise removal),
+          .ss.factor 2-D (Joint and Marginal Frequencies, Cramer's
+          V, chi-square UNCORRECTED as summary.table — the old
+          scipy call applied Yates on 2x2), .ss.numeric by levels
+          (n/miss/mean/sd/min/mdn/max, R's width arithmetic),
+          .ss.real "Plotted Values" (bar only), and the "Summary
+          Table for" crosstab of stat with by/facet. Variable
+          labels from data.attrs head the tables. Line-identical
+          to R on Employee for 11 cases across bar/pie/radar
+          (trailing spaces aside). Faceted bar + stat output (R
+          prints a 2-D Plotted Values) waits on that item.
+    - [x] list by= for treemap/icicle/sunburst (pie with by):
+          hier_aggregate takes a list of by columns, one level
+          deeper each; Chart carries by_more through casewise
+          deletion, is_agg (duplicated cells), the title. Node table
+          (ids, parents, leaf values, per-node stat) identical to
+          R for counts and stat="mean" on Employee (Dept, Gender,
+          Plan). Console: nested_stats prints the joint frequencies
+          (or the stat) along every path - R prints nothing for 3+
+          dimensions.
+    - [x] dot chart redesign: horiz=None resolves True for the
+          dot form (Cleveland), and sort is inverted for every
+          horizontal chart, bars included, as R (horizontal bars
+          were not inverted before); value axis from zero; no title
+          unless main=; R's headroom rule (a step past the top tick
+          only when it would clip). by= reshaped to one column per
+          level and drawn by the paired path (unfaceted) or as
+          grouped series in every panel (faceted). Two series =
+          a pair: ordered by y2-y1 ascending (largest gain on top)
+          unless sort given, joined by a segment, the difference
+          listed (counts / y list) or a Diff row added to the
+          summary table (by + stat). y list with a repeated x
+          requires stat and aggregates each column. segments_x/y
+          on the wrong axis prints R's note. legend_title allowed
+          for multi-series dots. Verified against R's plotly JSON
+          on 9 cases: 7 identical; P6 ("Pre & Post" vs R's
+          deparsed "c(Pre, Post)") and P7 (by+facet: R orders x by
+          aggregation output, labels "Salary" not "Mean of
+          Salary", no legend title) differ deliberately.
+    - [x] pretty() (utils.py) replaced by a port of R's R_pretty()
+          (pretty.c, high.u.bias 1.5): the old 1-2-5 rule disagreed
+          with R on 21 of 53 test ranges (0..132563 gave 50K steps,
+          R 20K). Identical to R on all 53. Affects ticks package-
+          wide; no existing test changed.
+    - [x] XY() parity: a categorical x or y now refused with R's
+          four messages (both categorical -> Chart bubble; one
+          case per level -> Chart dot; else X(y, by=x [, facet]);
+          row_names -> Chart dot). The row_names and stat= dot-plot
+          delegations removed (user's call, Oct 2026). stat, sort,
+          segments_x/_y kept in the signature, as R's, but raise:
+          R's XY stat is the n_bins binned scatter (not ported;
+          R's own XY(Years, Salary, stat="mean") crashes inside
+          .plt.main - a lessR bug). Chart() gained R's row_names
+          pseudo-variable (row labels in order, axis label dropped).
+    - [x] form="profile": unfaceted renders through plt_plotly()
+          (connect=True, x at positions 1..k labeled by category)
+          as R goes through .plt.main() -> plt.plotly(); traces
+          match R's plotly JSON on 5 cases (values, marker sizes
+          10.875/9.75, colors, legend sample lines, axis titles).
+          Value ticks follow lessPy's XY convention (pretty() over
+          the data, 4% pad) where R's base-derived ticks are
+          trimmed to the region (R's origin_y=0 labels stop at
+          80K below a 91K point). by x cells with no data draw a
+          gap (profile and dot exempt from the pipeline's
+          non-finite halt). facet=: profile_plotly.py, a plotly
+          design of R's base-only .plt.profile.facet (shared x
+          categories and value scale, one legend, lessPy's
+          min(n,3) grid). origin_x on a profile raises naming
+          origin_y.
+    - [x] faceted bar with stat= and with by= (bc_facet_plotly):
+          the stat of y aggregated within each panel (pre-
+          aggregated values plotted directly), the axis named for
+          the statistic and always including zero; by divides
+          each bar into its levels (stacked, beside=True grouped,
+          stack100 within each bar), one legend for all panels,
+          legend_title allowed. stack100 + facet needs by. Console:
+          the facet x x Summary Table for stat (R's duplicate
+          "Plotted Values" not repeated); counts with by + facet
+          print one Joint and Marginal table per facet level (R
+          prints x by facet, ignoring by, and its stat+by Plotted
+          Values keeps only the first group per cell - both lessR
+          defects). Every category labeled in Trellis panels.
+          Deliberate: stack100 axis is "Proportion within X" 0-1,
+          as the single panel, where R's lattice uses "Percent of"
+          0-100.
+    - [x] facet fill order now TOP-DOWN, reading order (facet_pos,
+          VBS bands, docs/comments), matching lessR's Aug 2026
+          as.table=TRUE change for every lattice-based facet of
+          X/XY/Chart. A ragged grid's lowest panel in a column now
+          carries its own x tick labels.
+    - [x] list of x (multi-item stacked chart), bc_items_plotly.py
+          + _chart_items in Chart.py: R's one_plot test (items must
+          share one response set, else refuse - R draws separate
+          charts, which one returned Figure cannot), responses x
+          items counts, weighted-mean order largest on top, % of
+          item labels cut below 4%, legend "Responses", divergent
+          palette by theme (.get_fill diverge). Console "Frequencies
+          of Responses by Variable" identical to R on Mach4. facet=
+          via bc_facet_plotly(by_tbls=), items in the given order,
+          per-panel tables identical to R; labels/gap/sort refused
+          with R's reasons. by refused naming facet. Not ported:
+          form="bubble" (BPFM, raises NotImplementedError) and the
+          vertical layout (horiz=False). Also fixed getColors(pal,
+          "end") - a string end_pal was indexed as its first
+          letter, so divergent requests silently fell back to one
+          sequential palette.
+    - [x] params: font_size was already handled by the
+          font_scaled wrapper. sub= added to that wrapper, so
+          Chart/X/XY all take it: plotly title.subtitle under a
+          title (fallback: a smaller second title line on plotly
+          <5.23), the subtitle itself as the title line when there
+          is none; sub_size/sub_color options. NOTE: in lessR, sub
+          reaches only the multi-x bubble (.dpmat.main) - inert on
+          every plotly form. labels_cut= on bar charts (bc_plotly
+          _bar_labels), applied only when given so no existing
+          figure moves; share of total, or within the bar for
+          stack100, skipped for one-series stat bars and outside
+          labels, as bc.main.R. NOTE: R's .bc.plotly never receives
+          labels_cut (base-only, like gap/legend_* were). The
+          multi-item chart keeps R's 0.04 default. segments= is the
+          profile's on/off for its joining lines (unfaceted and
+          faceted); raises on other forms naming segments_x/_y.

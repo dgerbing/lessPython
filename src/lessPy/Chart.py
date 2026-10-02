@@ -28,6 +28,9 @@ import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
 from .bc_plotly import bc_facet_plotly, bc_plotly
+from .bc_items_plotly import (
+    bc_items_plotly, items_fill, items_stats_lines, items_table,
+)
 from .plt_add import plt_add
 from .bubble_plotly import bubble_plotly
 from .dot_plotly import dot_plotly
@@ -35,6 +38,8 @@ from .hier_plotly import (
     hier_aggregate, hier_color_resolve, hier_plotly,
 )
 from .pie_plotly import pie_plotly
+from .plt_plotly import plt_plotly
+from .profile_plotly import profile_facet_plotly
 from .radar_plotly import radar_plotly
 from .plotly_utils import build_title, font_scaled
 from .stats_out import chart_stats, resolve_quiet
@@ -106,7 +111,8 @@ def _facet_table(x_s, y_s, by_s, stat, is_agg, x_order, by_order,
     return (t.reindex(index=by_order, columns=x_order)
             .fillna(0))
 
-_FORMS = ("bar", "radar", "bubble", "dot", "pie", "icicle", "treemap")
+_FORMS = ("bar", "radar", "bubble", "dot", "pie", "icicle", "treemap",
+          "profile")
 _STATS = ("mean", "sum", "sd", "deviation", "min", "median", "max")
 _SORTS = ("0", "-", "+")
 
@@ -161,21 +167,236 @@ def _dot_origin_grid(vals, origin_in=None, is_counts=None):
     return origin, gridT
 
 
+def _chart_items(data, items, y, by, facet, form, stat, sort,
+                 sort_miss, stack100, horiz, fill, theme, labels,
+                 labels_size, gap, labels_cut, xlab, ylab, main,
+                 legend_title,
+                 n_col, n_row, axis_fmt, axis_x_pre, rotate_x,
+                 rotate_y, quiet):
+    """The multi-item stacked chart and its faceted form. R analog:
+    the multiple-x branch of Chart.R, .bc.main() multi, and
+    .bar.stackedLattice()"""
+    if by is not None:
+        raise ValueError(
+            "by is not available for multiple x variables: the "
+            "items claim position and the responses color, so a by "
+            "variable has no encoding left. Use facet, which draws "
+            "each group in a panel of its own.")
+    if facet is not None and form != "bar":
+        raise ValueError(
+            'facet with multiple x variables requires form="bar"')
+    if form == "bubble":
+        raise NotImplementedError(
+            "the bubble plot frequency matrix of multiple x "
+            'variables is not yet ported; use form="bar"')
+    if form != "bar":
+        raise ValueError(
+            'Multiple x variables only available for form="bar"')
+    if y is not None or stat is not None:
+        raise ValueError(
+            "A multi-item chart counts the responses to each item, "
+            "so y and stat do not apply")
+    if not horiz:
+        raise NotImplementedError(
+            "the vertical multi-item chart is not yet ported")
+    cols = [_get_column(data, it, "x") for it in items]
+    frq, wm, numeric = items_table(cols, items)
+    fill_use = (fill if isinstance(fill, (list, tuple))
+                else [fill] * len(frq.index) if fill is not None
+                else items_fill(theme, len(frq.index)))
+    leg = "Responses" if legend_title is None else legend_title
+    show = not resolve_quiet(quiet)
+
+    if facet is None:
+        # ordered by mean response, the largest at the top: the bars
+        #   build upward from the bottom, so ascending unless sort
+        #   says otherwise
+        if sort_miss:
+            sort = "+"
+        order = list(items)
+        if sort != "0":
+            order = list(wm.sort_values(ascending=(sort == "+"),
+                                        kind="stable").index)
+        if show:
+            # the table lists the items top of the chart first
+            print("\n".join(_items_print(
+                frq[order[::-1]], wm[order[::-1]], numeric)))
+        return bc_items_plotly(
+            frq, order, fill_use,
+            labels="%" if labels is None else labels,
+            labels_size=labels_size, stack100=stack100,
+            labels_cut=0.04 if labels_cut is None else labels_cut,
+            x_lab="" if xlab is None else xlab,
+            y_lab="" if ylab is None else ylab,
+            legend_title=leg, main=main or None,
+            axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+            rotate_x=rotate_x, rotate_y=rotate_y)
+
+    # faceted: a panel is a fraction of the width of the single
+    #   chart, too narrow for segment labels, and the paneled chart
+    #   keeps the order given so the panels read alike
+    if labels is not None and labels != "off":
+        raise ValueError(
+            "labels are not drawn on a faceted multi-item chart. Each "
+            "panel is a fraction of the width of the single chart, so "
+            "its segments are too narrow for a legible label. The "
+            "counts for each panel are reported at the console.")
+    if gap is not None:
+        raise ValueError(
+            "gap is not available for a faceted multi-item chart")
+    if not sort_miss and sort != "0":
+        raise ValueError(
+            "sort is not available for a faceted multi-item chart: "
+            "the panels keep the items in the order given, so they "
+            "read alike")
+    if isinstance(facet, (list, tuple)):
+        fcols = [_get_column(data, f, "facet") for f in facet]
+        fac = fcols[0].astype(str)
+        for c in fcols[1:]:
+            fac = fac + " / " + c.astype(str)
+        facet_name = ", ".join(facet)
+    else:
+        fac = _get_column(data, facet, "facet")
+        facet_name = facet
+    keep = fac.notna()
+    facet_order = _category_order(fac[keep])
+    resp = list(frq.index)
+    tbls = {}
+    for lv in facet_order:
+        m = keep & (fac == lv)
+        f_lv, w_lv, _ = items_table([c[m] for c in cols], items) \
+            if all(c[m].notna().any() for c in cols) else (
+                pd.DataFrame(0, index=resp, columns=items), None, None)
+        f_lv = f_lv.reindex(index=resp, fill_value=0)
+        if show:
+            if w_lv is None:
+                w_lv = pd.Series(np.nan, index=items)
+            print("\n".join(_items_print(
+                f_lv, w_lv, numeric,
+                f"Frequencies of Responses by Variable, "
+                f"{facet_name}: {lv}")))
+        t = f_lv.astype(float)
+        if stack100:
+            tot = t.sum(axis=0)
+            t = t.div(tot.where(tot != 0), axis=1).fillna(0)
+        tbls[lv] = t[items[::-1]]       # first item at the top
+    tbl = pd.DataFrame([tbls[lv].sum(axis=0) for lv in facet_order],
+                       index=facet_order)
+    tbl.index.name = facet_name
+    n_col_use = (max(1, int(n_col)) if n_col is not None
+                 else max(1, math.ceil(len(facet_order) / int(n_row)))
+                 if n_row is not None else 1)
+    return bc_facet_plotly(
+        tbl, x_name="", facet_name=facet_name,
+        x_lab="" if xlab is None else xlab,
+        y_lab="" if ylab is None else ylab,
+        fill=fill_use, border="off",
+        digits_d=2 if stack100 else 0, n_col=n_col_use,
+        axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+        rotate_x=rotate_x, rotate_y=rotate_y, main=main,
+        by_tbls=tbls, by_name=leg, beside=False,
+        val_name=("Proportion" if stack100 else "Count"),
+        legend_title=leg)
+
+
+def _items_print(frq, wm, numeric, title=None):
+    return items_stats_lines(
+        frq, wm, title or "Frequencies of Responses by Variable",
+        numeric)
+
+
+def _profile_fill(theme):
+    """One hue per series from the theme, as R's profile does:
+    .color_range(.get_fill(theme), n), the qualitative hues for the
+    default theme."""
+    from .plotly_utils import BASE_COLORS
+    if theme is None or theme == "colors":
+        return list(BASE_COLORS)
+    return _theme_fill(theme, 8)
+
+
+def _max_dd(vals):
+    """Most decimal digits among the first 200 values as R format()
+    writes them, 7 significant digits. R analog: .max.dd()"""
+    mx = 0
+    for v in list(vals)[:200]:
+        if v is None or not np.isfinite(v):
+            continue
+        txt = f"{float(v):.7g}"
+        if "." in txt and "e" not in txt:
+            mx = max(mx, len(txt) - txt.index(".") - 1)
+    return mx
+
+
+def _dot_diff_lines(cats, ydf, x_name):
+    """The difference a paired dot plot presents, listed in the
+    order drawn, top of the plot first. R analog: the dif.pair
+    listing of Chart.R's paired dot path."""
+    difs = (ydf.iloc[:, 1] - ydf.iloc[:, 0]).to_numpy(dtype=float)
+    dd = min(_max_dd(np.r_[ydf.iloc[:, 0], ydf.iloc[:, 1]]) + 1, 7)
+    ny = len(difs)
+    mx_i = len(str(ny))
+    mx_d = max(len(f"{v:.{dd}f}") for v in difs)
+    mx_f = max([5] + [len(c) for c in cats])
+    lines = ["", f"{ydf.columns[1]} - {ydf.columns[0]}",
+             f"{'n'.rjust(mx_i)} {' diff'.rjust(mx_d)}  {x_name}",
+             "-" * (mx_i + mx_d + mx_f + 2)]
+    shown = (range(1, ny + 1) if ny <= 20
+             else list(range(1, 11)) + list(range(ny - 9, ny + 1)))
+    for i in range(1, ny + 1):
+        k = ny - i
+        if i in shown:
+            lines.append(f"{str(i).rjust(mx_i)} "
+                         f"{f'{difs[k]:.{dd}f}'.rjust(mx_d)} {cats[k]}")
+    return lines + [""]
+
+
+def _dot_paired(cats, ydf, sort, sort_miss, origin_x, show_diff,
+                x_name, **render):
+    """Order a multi-series dot plot and draw it. Two series are a
+    pair, read for the gap between them, so by default they are
+    ordered by that difference, ascending so the largest positive
+    difference is drawn at the top, and the value axis begins at
+    zero. More series are ordered by their row mean when sort is
+    given. R analog: Chart.R paired dot path."""
+    dif_pair = ydf.shape[1] == 2
+    if dif_pair and sort_miss:
+        sort = "+"
+    if sort != "0":
+        key = (ydf.iloc[:, 1] - ydf.iloc[:, 0] if dif_pair
+               else ydf.mean(axis=1))
+        order = np.argsort(key.to_numpy(dtype=float)
+                           * (-1 if sort == "-" else 1),
+                           kind="stable")
+        cats = [cats[i] for i in order]
+        ydf = ydf.iloc[order]
+    if dif_pair and show_diff:
+        print("\n".join(_dot_diff_lines(cats, ydf, x_name)))
+    origin, gridT = _dot_origin_grid(
+        ydf.to_numpy(dtype=float).ravel(),
+        origin_in=0 if (dif_pair and origin_x is None) else origin_x)
+    if origin is None:
+        origin = 0
+    return dot_plotly(cats, ydf, gridT=gridT, origin_x=origin,
+                      **render)
+
+
 def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
           form="bar",
           n_row=None, n_col=None,
-          hole=0.65,
+          hole=0.62,
           radius=0.50, power=0.5,
           pt_size=1, origin_x=None, origin_y=None,
           segments_x=None, segments_y=None,
           stat=None, stat_x="count",
-          horiz=False, sort="0", beside=False, stack100=False,
+          horiz=None, sort=None, beside=False, stack100=False,
           gap=None, scale_y=None, break_x=None,
           fill=None, color=None, transparency=None,
           fill_split=None, fill_scaled=False, fill_chroma=75,
           theme=None,
           labels=None, labels_position=None,
           labels_color=None, labels_size=None, labels_decimals=None,
+          labels_cut=None, segments=None,
           legend_title=None, legend_position=None,
           legend_labels=None, legend_horiz=False,
           legend_size=None, legend_abbrev=None, legend_adjust=0,
@@ -216,6 +437,20 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     "K": "60K" for thousands, commas past 9999); axis_x_pre /
     axis_y_pre prepend a per-axis prefix (e.g. "$").
 
+    form="dot" is Cleveland's dot plot: categories on the vertical
+    axis (horiz defaults to True for this form alone), the value
+    axis from zero, no title unless main= is given. With by=, one
+    series of dots per level; with exactly two levels, or a pair
+    of y variables (y=["Pre", "Post"]), the pair is joined by a
+    segment and ordered by its difference, largest positive at
+    the top. sort="0" keeps the data order instead.
+
+    form="profile" plots one point per category of x and connects
+    the points across the categories; with by= it draws one
+    profile per level, the interaction plot of a two-way ANOVA.
+    origin_y sets where the value axis begins; facet= draws one
+    panel per level on a shared value scale.
+
     Variables are strings naming columns of the DataFrame `data`.
     Returns a plotly Figure; call .show() to display from a script.
     """
@@ -226,6 +461,62 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     if form not in _FORMS:
         raise ValueError(f"form must be one of {_FORMS}")
 
+    # Cleveland's dot plot places the categories on the vertical
+    #   axis so their labels read across. A horizontal chart lists
+    #   its first category at the bottom, so sort is inverted to keep
+    #   "-" meaning largest at the top. R analog: Chart.R horiz.miss
+    sort_miss = sort is None
+    if sort is None:
+        sort = "0"
+    multi_x = isinstance(x, (list, tuple))
+    if horiz is None:
+        # the dot plot and the multi-item chart list their categories
+        #   down the vertical axis
+        horiz = form == "dot" or multi_x
+    if horiz and sort in ("+", "-"):
+        sort = "+" if sort == "-" else "-"
+
+    # segments joins the points of a profile; the dot chart's stems
+    #   are set along its value axis
+    if segments is not None and form != "profile":
+        raise ValueError(
+            "segments joins the points of a profile chart, so it "
+            'needs form="profile"; for the segments of a dot chart '
+            "set segments_x or segments_y")
+    if labels_cut is not None and form != "bar":
+        raise ValueError(
+            "labels_cut leaves off the value labels of small bar "
+            'segments, so it needs form="bar"')
+
+    # the value axis of a profile is y, so origin_x has nothing to set
+    if form == "profile" and origin_x is not None:
+        raise ValueError(
+            "origin_x does not apply to a profile chart: its value "
+            "axis is y, so set origin_y")
+
+    # Only the segments parameter along the value axis applies. The
+    #   dot plot's orientation decides which one that is, so say which
+    #   parameter to set instead rather than let the given one go
+    #   inert. An unfaceted plot of several series is always
+    #   horizontal.
+    #   R analog: Chart.R .seg_note
+    if form == "dot":
+        dot_h = horiz or (facet is None and (
+            by is not None or isinstance(y, (list, tuple))))
+        given, instead, cat_ax, seg_ax = (
+            ("segments_y", "segments_x", "y", "x") if dot_h
+            else ("segments_x", "segments_y", "x", "y"))
+        if (segments_y if dot_h else segments_x) is not None:
+            print(f">>> {given} does not apply to this dot plot.\n"
+                  f"    The categories are on the {cat_ax}-axis, so "
+                  "the line segments run along the "
+                  f"{seg_ax}-axis.\n"
+                  f"    To control them, set  {instead}.\n")
+            if dot_h:
+                segments_y = None
+            else:
+                segments_x = None
+
     # hierarchical routing: treemap/icicle always; pie with by=
     # nests the by rings inside the x wedges as a sunburst
     # R analog: Chart.R hier dispatch
@@ -234,14 +525,33 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         hier_type = form
     elif form == "pie" and by is not None:
         hier_type = "sunburst"
+    if isinstance(by, (list, tuple)) and len(by) > 1 \
+            and hier_type is None:
+        raise ValueError(
+            f"Only one by variable is permitted for a {form} chart, "
+            "but more than one specified.\n\n"
+            "The groups of by are overlaid within the display, one "
+            "color\n  to each.  That one channel is carried by the "
+            "first variable,\n  so a second has no encoding left by "
+            "which to separate its\n  levels.\n"
+            "Multiple by variables apply only to the hierarchical\n"
+            "  charts -- pie/sunburst, treemap, and icicle -- where\n"
+            "  nesting accepts depth and each added variable is one\n"
+            "  level deeper.\n"
+            f"To stratify a {form} chart by a second variable, use\n"
+            "  facet, which draws each group in a panel of its own.")
+    # hierarchical forms: each further by variable is one level
+    #   deeper; the first plays the part of a single by elsewhere
+    by_more = []
+    if isinstance(by, (list, tuple)):
+        by_more = list(by[1:])
+        by = by[0] if by else None
+    by_label = ", ".join([by] + by_more) if by is not None else None
     if hier_type is not None and stat == "deviation":
         raise ValueError('stat="deviation" is not meaningful for '
                          "hierarchical charts: negative values "
                          "cannot form part-of-whole areas")
 
-    if form == "dot" and by is not None:
-        raise ValueError("The by variable is not meaningful for "
-                         "dot charts. Do a bar chart.")
     if isinstance(y, (list, tuple)) and form != "dot":
         raise ValueError('Multiple y variables are only supported '
                          'for form="dot" (paired dot chart)')
@@ -260,11 +570,11 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         if form != "bar":
             raise ValueError('stack100 rescales the bars of a bar '
                              'chart, so it needs form="bar"')
-        if facet is not None:
+        if facet is not None and by is None:
             raise ValueError(
-                "stack100 rescales each bar within its by groups, "
-                "and a faceted bar chart (Trellis) has no by "
-                "variable. Use by= instead of facet=.")
+                "stack100 rescales each bar to show how the levels "
+                "of a by variable divide it, so a faceted bar chart "
+                "needs by= for it")
         if by is None and stat_x == "proportion":
             raise ValueError(
                 'stack100 without a by variable is the same as '
@@ -291,6 +601,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             "legend_abbrev": legend_abbrev,
             "legend_adjust": legend_adjust or None}
     _leg_set = [k for k, v in _leg.items() if v is not None]
+    # a dot plot of several series heads its legend with legend_title
+    if form == "dot" and (by is not None
+                          or isinstance(y, (list, tuple))):
+        _leg_set = [k for k in _leg_set if k != "legend_title"]
     if _leg_set:
         if form != "bar":
             raise ValueError(
@@ -300,7 +614,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             raise ValueError(
                 f"{', '.join(_leg_set)} style the legend that a by "
                 "variable creates, so they need by=")
-        if facet is not None:
+        if facet is not None and _leg_set != ["legend_title"]:
             raise ValueError(
                 f"{', '.join(_leg_set)} apply to a single-panel bar "
                 "chart; a faceted (Trellis) bar chart has no by "
@@ -348,62 +662,90 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             if sort != "0":
                 raise ValueError("Sort not applicable to Trellis "
                                  "(faceted bar) charts")
-            if stat is not None:
-                raise ValueError(
-                    "Only the original data work with Trellis "
-                    "plots, no data aggregation with parameter "
-                    "stat. Use by instead of facet.")
-            if y is not None:
-                raise ValueError(
-                    "The faceted bar chart displays counts of x, "
-                    "so a y variable does not apply. Use by "
-                    "instead of facet.")
-            if by is not None:
-                raise ValueError(
-                    "by and facet do not combine for bar charts: "
-                    "each facet panel displays the counts of x. "
-                    "Use one or the other.")
+            if stat_x == "proportion" and by is not None:
+                raise NotImplementedError(
+                    'stat_x="proportion" with by= is not yet ported')
 
     # ----- resolve variables and filter ---------------------------
     if filter is not None:
         data = data.query(filter)
 
-    # paired dot chart: x=labels, y=[col1, col2, ...], displayed
-    # directly, never aggregated. R analog: Chart.R paired-dot path
+    # row_names: the data frame's row labels as the categorical x,
+    #   in their own order rather than alphabetical; the axis label
+    #   is dropped unless given. R analog: Chart.R row_names
+    if (isinstance(x, str) and x in ("row_names", "row.names")
+            and x not in data.columns):
+        names = data.index.astype(str)
+        data = data.copy()
+        data[x] = pd.Categorical(
+            names, categories=list(dict.fromkeys(names)))
+        if xlab is None:
+            xlab = ""
+
+    # a list of x variables that share one response scale: the
+    # multi-item stacked chart. Its bands claim position and color
+    # the responses within them, so by has no encoding left; facet
+    # panels remain. R analog: Chart.R multiple-x path
+    if multi_x:
+        return _chart_items(
+            data, list(x), y=y, by=by, facet=facet, form=form,
+            stat=stat, sort=sort, sort_miss=sort_miss,
+            stack100=stack100, horiz=horiz, fill=fill, theme=theme,
+            labels=labels, labels_size=labels_size, gap=gap,
+            labels_cut=labels_cut,
+            xlab=xlab, ylab=ylab, main=main,
+            legend_title=legend_title, n_col=n_col, n_row=n_row,
+            axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+            rotate_x=rotate_x, rotate_y=rotate_y, quiet=quiet)
+
+    # paired dot chart: x=labels, y=[col1, col2, ...]. Displayed
+    # directly when x identifies the cases; with a repeated x each
+    # column is aggregated over x by stat, which is then required.
+    # R analog: Chart.R paired-dot path and its multi-column y stat
     if isinstance(y, (list, tuple)):
-        if stat is not None:
-            raise ValueError("stat does not apply to a paired dot "
-                             "chart; the values display directly")
         x_ser = _get_column(data, x, "x")
         y_cols = [_get_column(data, yi, "y") for yi in y]
         sub = pd.concat([x_ser] + y_cols, axis=1).dropna()
-        cats = sub[x].astype(str).tolist()
         ydf = sub[list(y)]
-
-        # sort= orders rows by row mean across all series
-        if sort != "0":
-            order = (ydf.mean(axis=1)
-                     .sort_values(ascending=(sort == "+")).index)
-            cats = sub.loc[order, x].astype(str).tolist()
-            ydf = ydf.loc[order]
-
-        origin, gridT = _dot_origin_grid(
-            ydf.to_numpy(dtype=float).ravel(), origin_in=origin_x)
-        if origin is None:
-            origin = 0
-        if main is None:
-            main = build_title(x, y_name=" & ".join(y))
-        elif main == "":
-            main = None
-        return dot_plotly(
-            cats, ydf,
-            pt_size=pt_size,
-            x_lab="" if xlab is None else xlab, y_lab=x,
+        y_lbl = " & ".join(y)
+        if sub[x].duplicated().any():
+            if stat is None:
+                raise ValueError(
+                    "The data are not a summary (pivot) table, and "
+                    f"you have numerical variables, y = {y_lbl}, so "
+                    "specify stat to define the aggregation, e.g., "
+                    'stat="mean"')
+            if stat not in STAT_FUN and stat != "deviation":
+                raise ValueError(f"stat must be one of {_STATS}")
+            grp = ydf.groupby(sub[x], observed=True, sort=True)
+            if stat == "deviation":
+                ydf = grp.mean()
+                ydf = ydf - ydf.mean()
+            else:
+                ydf = STAT_FUN[stat](grp)
+            ydf = ydf.reindex([c for c in _category_order(sub[x])
+                               if c in ydf.index])
+            cats = [str(c) for c in ydf.index]
+            val_lab = f"{STAT_LBL[stat]} of {y_lbl}"
+        else:
+            if stat is not None:
+                raise ValueError(
+                    "The data are a summary table, so do not specify "
+                    "stat: the aggregation has already been done")
+            cats = sub[x].astype(str).tolist()
+            val_lab = y_lbl
+        x_lab_dot = (xlab if xlab else ylab if ylab else val_lab)
+        return _dot_paired(
+            cats, ydf.reset_index(drop=True), sort, sort_miss,
+            origin_x, show_diff=not resolve_quiet(quiet), x_name=x,
+            fill=fill, border=color, pt_size=pt_size,
+            x_lab=x_lab_dot, y_lab=x,
             digits_d=2 if digits_d is None else digits_d,
             pt_opacity=1 - (get_option("trans_pt_fill", 0.10)
                             if transparency is None
                             else transparency),
-            gridT=gridT, origin_x=origin, main=main,
+            main=None if not main else main,
+            legend_title=legend_title,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
             rotate_x=rotate_x, rotate_y=rotate_y,
             segments_x=(True if segments_x is None
@@ -412,6 +754,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
     x_ser = _get_column(data, x, "x")
     by_ser = _get_column(data, by, "by") if by is not None else None
+    by_more_sers = [_get_column(data, b, "by") for b in by_more]
     y_ser = _get_column(data, y, "y") if y is not None else None
 
     # multiple facet variables define the panel grid, not extra
@@ -431,11 +774,17 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         fac_cols = [ser]
         facet_name = str(ser.name)
 
+    # count missing x before the removal below, or it is always 0
+    #   R analog: Chart.R n.miss.x
+    n_miss_x = int(x_ser.isna().sum())
+
     # casewise deletion over the variables in the analysis
     used = [s for s in (x_ser, by_ser, y_ser) if s is not None]
+    used += by_more_sers
     used += fac_cols or []
     keep = ~pd.concat(used, axis=1).isna().any(axis=1)
     x_ser = x_ser[keep]
+    by_more_sers = [b[keep] for b in by_more_sers]
     if by_ser is not None:
         by_ser = by_ser[keep]
     if y_ser is not None:
@@ -451,6 +800,17 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
     x_order = _category_order(x_ser)
     by_order = _category_order(by_ser) if by_ser is not None else None
+
+    # A numeric x with many distinct values yields one category per
+    #   value, usually a distribution in disguise. Advisory only: no
+    #   count of levels reliably separates categorical from
+    #   continuous, so the call is honored. R analog: Chart.R n.x > 12
+    if (y_ser is None and pd.api.types.is_numeric_dtype(x_ser)
+            and len(x_order) > 12):
+        print(f">>> {x} is numeric with {len(x_order)} distinct "
+              "values, so each\n    becomes its own category. For "
+              "the distribution of a continuous\n    variable:  "
+              f'X("{x}")\n')
     facet_order = (_category_order(facet_ser)
                    if facet_ser is not None else None)
 
@@ -523,6 +883,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     n_x = x_ser.nunique()
     if by_ser is None:
         is_agg = n_x >= len(x_ser)
+    elif by_more_sers:
+        # each cell of the nesting appears once in a summary table
+        cells = pd.concat([x_ser, by_ser] + by_more_sers, axis=1)
+        is_agg = not cells.astype(str).duplicated().any()
     else:
         is_agg = n_x * by_ser.nunique() >= len(by_ser)
 
@@ -555,32 +919,52 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     if not resolve_quiet(quiet):
         y_out = (y_ser if y_ser is not None
                  and stat in STAT_FUN else None)
-        if y_ser is None or y_out is not None:
+        if by_more_sers and (y_ser is None or y_out is not None):
+            from .stats_out import nested_stats
+            print("\n".join(nested_stats(
+                [x_ser, by_ser] + by_more_sers, [x, by] + by_more,
+                y_out, stat, y,
+                2 if digits_d is None else digits_d)))
+        elif y_ser is None or y_out is not None:
+            var_lbl = data.attrs.get("variable_labels", {}) or {}
             print("\n".join(chart_stats(
                 x_ser, by_ser, y_out, stat, x, by, y,
-                2 if digits_d is None else digits_d)))
+                2 if digits_d is None else digits_d,
+                stack100=stack100, n_miss=n_miss_x,
+                x_lbl=var_lbl.get(x), y_lbl=var_lbl.get(y),
+                facet_ser=facet_ser, facet_name=facet_name,
+                form=form)))
 
     # labels default for aggregated data; for counts leave labels
     # None so bc_plotly shows the value with % lines in hover
     # R analog: Chart.R line ~716
     if labels is None and (stat is not None or
                            (is_agg and y_ser is not None)):
-        labels = "%" if beside else "input"
+        # the bars carry a statistic, so the label is its value;
+        #   beside only arranges the bars, and a percentage of a sum
+        #   of means is not a quantity
+        labels = "input"
 
     # ----- hierarchical forms aggregate per nesting level ---------
     # from the raw columns, not from the flat table built below
     if hier_type is not None:
         if digits_d is None:
             digits_d = 0 if y_ser is None else 2
-        agg = hier_aggregate(x_ser, by=by_ser, y=y_ser, stat=stat,
+        agg = hier_aggregate(x_ser,
+                             by=([by_ser] + by_more_sers if by_more
+                                 else by_ser),
+                             y=y_ser, stat=stat,
                              facet=facet_ser,
-                             x_name=x, by_name=by, y_name=y,
+                             x_name=x,
+                             by_name=[by] + by_more if by_more else by,
+                             y_name=y,
                              facet_name=facet_name,
                              facet_order=facet_order)
-        fill_vec = hier_color_resolve(x_order, fill)
+        fill_vec = hier_color_resolve(x_order, fill, x=x_ser,
+                                      y=y_ser, stat=stat)
         if main is None:
-            main = build_title(x, by_name=by, y_name=y, stat=stat,
-                               facet_name=facet_name)
+            main = build_title(x, by_name=by_label, y_name=y,
+                               stat=stat, facet_name=facet_name)
         elif main == "":
             main = None
         # Chart resolves the labels default before hier sees it:
@@ -604,26 +988,85 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     # (hier forms handled above; pie facet became the by grouping)
 
     if facet_ser is not None and form == "bar":
-        # Trellis bar chart: horizontal count bars per panel,
-        # the plotly port of R's .bar.lattice rendering
-        tbl = (pd.crosstab(facet_ser, x_ser)
-               .reindex(index=facet_order, columns=x_order,
-                        fill_value=0))
+        # Trellis bar chart: horizontal bars per panel, the plotly
+        # port of R's .bar.lattice rendering. Counts of x, or the
+        # stat of y aggregated within each panel; a by variable
+        # divides each bar into its levels, as the bar chart of a
+        # single panel does, drawn within every panel
+        agg_y = y_ser is not None and stat is not None
+        if y_ser is not None and not agg_y and not is_agg:
+            raise ValueError(
+                "The data are not a summary (pivot) table, so "
+                'specify stat to define the aggregation, e.g., '
+                'stat="mean"')
+
+        def cell_tbl(m):
+            xs = x_ser[m]
+            if by_ser is None:
+                if y_ser is None:
+                    t = xs.groupby(xs, observed=True).size()
+                elif agg_y:
+                    t = STAT_FUN[stat](y_ser[m].groupby(xs,
+                                                        observed=True))
+                else:
+                    t = y_ser[m].groupby(xs, observed=True).first()
+                return t.reindex(x_order)
+            df = pd.DataFrame({"b": by_ser[m], "x": xs,
+                               "y": 1.0 if y_ser is None
+                               else y_ser[m].astype(float)})
+            g = df.groupby(["b", "x"], observed=True)["y"]
+            t = (g.sum() if y_ser is None
+                 else STAT_FUN[stat](g) if agg_y else g.first())
+            t = t.unstack("x").reindex(index=by_order,
+                                       columns=x_order)
+            if y_ser is None:
+                t = t.fillna(0)
+            if stack100:
+                # each bar scaled to its own total compares
+                #   composition rather than magnitude
+                tot = t.sum(axis=0)
+                t = t.div(tot.where(tot != 0), axis=1)
+            return t
+
+        tbls = {lv: cell_tbl(facet_ser == lv) for lv in facet_order}
+        if by_ser is None:
+            tbl = pd.DataFrame([tbls[lv] for lv in facet_order],
+                               index=facet_order)
+            by_tbls = None
+        else:
+            # the panel totals stand in for the shape of the grid
+            tbl = pd.DataFrame([tbls[lv].sum(axis=0)
+                                for lv in facet_order],
+                               index=facet_order)
+            by_tbls = tbls
         tbl.index.name = facet_name
         tbl.columns.name = x
+        if stack100:
+            val_name = f"Proportion within {x}"
+        elif agg_y:
+            val_name = f"{STAT_LBL[stat]} of {y}"
+        elif y_ser is not None:
+            val_name = y
+        elif by_ser is not None:
+            val_name = "Count"
+        else:
+            val_name = None             # Count/Proportion of x
         return bc_facet_plotly(
             tbl, x_name=x, facet_name=facet_name,
             x_lab=xlab, y_lab=ylab, fill=fill,
             border="off" if color is None else color,
             opacity=(None if transparency is None
                      else 1 - transparency),
-            proportion=stat_x == "proportion",
+            proportion=stat_x == "proportion" and by_ser is None,
             digits_d=(digits_d if digits_d is not None
-                      else (0 if stat_x == "count" else 2)),
+                      else 2 if (y_ser is not None or stack100
+                                 or stat_x != "count") else 0),
             n_col=n_col_use or 1,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
             rotate_x=rotate_x, rotate_y=rotate_y,
             main=main,
+            by_tbls=by_tbls, by_name=by, beside=beside,
+            val_name=val_name, legend_title=legend_title,
         )
 
     if facet_ser is not None and form == "radar":
@@ -707,54 +1150,145 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             n_col=n_col_use,
         )
 
+    if facet_ser is not None and form == "profile":
+        # one profile per group within every panel, on the categories
+        # and value scale all panels share. Without y the value is a
+        # count; with y and no stat the values are supplied directly,
+        # one per cell. R analog: Chart.R faceted profile, drawn by
+        # .plt.profile.facet() in base R; here a plotly grid
+        agg_y = not is_agg and stat is not None
+        if y_ser is not None and not agg_y and not is_agg:
+            raise ValueError(
+                "The data are not a summary (pivot) table, so "
+                'specify stat to define the aggregation, e.g., '
+                'stat="mean"')
+        series = ([str(b) for b in by_order] if by_ser is not None
+                  else [None])
+        x_lv = [str(c) for c in x_order]
+        pos = {c: k + 1 for k, c in enumerate(x_lv)}
+        df = pd.DataFrame({
+            "f": facet_ser.astype(str), "x": x_ser.astype(str),
+            "g": (by_ser.astype(str) if by_ser is not None
+                  else "\0"),
+            "y": 1.0 if y_ser is None else y_ser.astype(float)})
+        g = df.groupby(["f", "g", "x"], observed=True)["y"]
+        t = (g.sum() if y_ser is None
+             else STAT_FUN[stat](g) if agg_y else g.mean())
+        cells = {}
+        for (f, gg, xx), v in t.items():
+            nm = None if by_ser is None else gg
+            xs, ys = cells.setdefault(f, {}).setdefault(nm, ([], []))
+            xs.append(pos[xx])
+            ys.append(float(v))
+        for f in cells:                 # draw left to right
+            for nm, (xs, ys) in cells[f].items():
+                o = np.argsort(xs)
+                cells[f][nm] = ([xs[k] for k in o], [ys[k] for k in o])
+        vals = t.to_numpy(dtype=float)
+        lo, hi = float(np.nanmin(vals)), float(np.nanmax(vals))
+        # the panels share one value scale, so the origin widens it
+        if origin_y is not None:
+            lo, hi = min(lo, origin_y), max(hi, origin_y)
+        y_tick = pretty(lo, hi)
+        if digits_d is None:
+            digits_d = 0 if y_ser is None else 2
+        from .plotly_utils import axis_format
+        y_lab = (ylab if ylab is not None
+                 else "Count" if y_ser is None
+                 else f"{STAT_LBL[stat]} of {y}" if agg_y else y)
+        return profile_facet_plotly(
+            cells, x_lv, series, y_tick,
+            axis_format(y_tick, digits_d, axis_fmt, axis_y_pre),
+            connect=True if segments is None else bool(segments),
+            x_lab=x if xlab is None else xlab, y_lab=y_lab,
+            by_name=by,
+            fill=(fill if isinstance(fill, (list, tuple))
+                  else [fill] if fill is not None
+                  else _profile_fill(theme)),
+            pt_size=1.5 * pt_size,
+            facet_levels=[str(f) for f in facet_order],
+            facet_name=facet_name, n_col=n_col_use,
+            main=None if not main else main, rotate_x=rotate_x)
+
     if facet_ser is not None and form == "dot":
         # aggregate and sort per facet panel; a panel shows only
-        # its own categories. R analog: Chart.R faceted dot prep
+        # its own categories. With by=, one series per level of by in
+        # every panel, on the full x-by-panel grid so a combination
+        # absent from the data is an empty cell. R analog: Chart.R
+        # faceted dot prep and its by reshape
         prop = stat_x == "proportion"
+        agg_y = not is_agg and stat is not None
         cats_l, vals_l, fac_l = [], [], []
-        for lv in facet_order:
-            m = facet_ser == lv
-            xs = x_ser[m].astype(str)
-            if y_ser is None:                # counts per panel
-                t = xs.groupby(xs).size()
-                if prop:
-                    tot = t.sum()
-                    t = t / tot if tot > 0 else t.astype(float)
-            elif not is_agg and stat is not None:
-                t = STAT_FUN[stat](y_ser[m].groupby(xs))
-            else:                            # pre-aggregated rows
-                t = pd.Series(y_ser[m].to_numpy(dtype=float),
-                              index=xs.values)
-            if sort != "0":
-                t = t.sort_values(ascending=(sort == "+"))
-            cats_l += [str(c) for c in t.index]
-            vals_l += [float(v) for v in t.to_numpy()]
-            fac_l += [str(lv)] * len(t)
+        if by_ser is not None:
+            if prop:
+                raise ValueError(
+                    'stat_x="proportion" with by= is not yet ported')
+            rows = []
+            for lv in facet_order:
+                m = facet_ser == lv
+                df = pd.DataFrame({"x": x_ser[m].astype(str),
+                                   "by": by_ser[m].astype(str),
+                                   "y": (1.0 if y_ser is None
+                                         else y_ser[m].astype(float))})
+                g = df.groupby(["x", "by"], observed=True)["y"]
+                t = (g.sum() if y_ser is None
+                     else STAT_FUN[stat](g) if agg_y else g.first())
+                wide = (t.unstack("by")
+                        .reindex(index=[str(c) for c in x_order],
+                                 columns=[str(b) for b in by_order]))
+                rows.append(wide)
+                cats_l += list(wide.index)
+                fac_l += [str(lv)] * len(wide)
+            vals_l = pd.concat(rows, ignore_index=True)
+            all_vals = vals_l.to_numpy(dtype=float).ravel()
+        else:
+            for lv in facet_order:
+                m = facet_ser == lv
+                xs = x_ser[m].astype(str)
+                if y_ser is None:                # counts per panel
+                    t = xs.groupby(xs).size()
+                    if prop:
+                        tot = t.sum()
+                        t = t / tot if tot > 0 else t.astype(float)
+                elif agg_y:
+                    t = STAT_FUN[stat](y_ser[m].groupby(xs))
+                else:                            # pre-aggregated rows
+                    t = pd.Series(y_ser[m].to_numpy(dtype=float),
+                                  index=xs.values)
+                if sort != "0":
+                    t = t.sort_values(ascending=(sort == "+"),
+                                      kind="stable")
+                cats_l += [str(c) for c in t.index]
+                vals_l += [float(v) for v in t.to_numpy()]
+                fac_l += [str(lv)] * len(t)
+            all_vals = vals_l
 
-        val_lab = (y if y is not None
-                   else ("Proportion of " + x if prop
-                         else f"Count of {x}"))
+        # an aggregated value is labeled by its statistic, as the
+        #   unfaceted chart is: "Mean of Salary", not "Salary"
+        if y_ser is None:
+            val_lab = ("Count" if by_ser is not None
+                       else f"Proportion of {x}" if prop
+                       else f"Count of {x}")
+        else:
+            val_lab = f"{STAT_LBL[stat]} of {y}" if agg_y else y
         if horiz:
             orientation = "h"
-            x_lab_arg = xlab if xlab is not None else val_lab
-            y_lab_arg = ylab if ylab is not None else x
+            x_lab_arg = (xlab if xlab is not None
+                         else ylab if ylab is not None else val_lab)
+            y_lab_arg = x
         else:
             orientation = "v"
             x_lab_arg = xlab if xlab is not None else x
             y_lab_arg = ylab if ylab is not None else val_lab
 
+        # the length of the segment carries the value, so the value
+        #   axis begins at zero unless an origin is specified
+        org_in = origin_x if horiz else origin_y
         origin, gridT = _dot_origin_grid(
-            vals_l,
-            origin_in=origin_x if horiz else origin_y,
+            all_vals, origin_in=0 if org_in is None else org_in,
             is_counts=True if y_ser is None else None)
         if digits_d is None:
             digits_d = 2 if (y_ser is not None or prop) else 0
-        if main is None:
-            main = build_title(
-                x, y_name="Proportion" if prop else y,
-                stat=stat, facet_name=facet_name)
-        elif main == "":
-            main = None
         return dot_plotly(
             cats_l, vals_l, orientation=orientation,
             fill=fill, border=color, pt_size=pt_size,
@@ -763,7 +1297,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             pt_opacity=1 - (get_option("trans_pt_fill", 0.10)
                             if transparency is None
                             else transparency),
-            gridT=gridT, origin_x=origin, main=main,
+            gridT=gridT, origin_x=origin,
+            main=None if not main else main,
+            legend_title=(legend_title if legend_title is not None
+                          else by),
             facet=fac_l, facet_name=facet_name, n_col=n_col_use,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
             axis_y_pre=axis_y_pre,
@@ -838,7 +1375,11 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             else:
                 tbl = fun(df.groupby(["by", "x"])["y"]).unstack("x")
             tbl = tbl.reindex(index=by_order, columns=x_order)
-        if not np.isfinite(tbl.to_numpy(dtype=float)).all():
+        # a profile or dot plot of several groups draws an empty
+        #   cell as a missing point; the other forms need every cell
+        gaps_ok = form in ("profile", "dot") and by_ser is not None
+        if not gaps_ok and not np.isfinite(
+                tbl.to_numpy(dtype=float)).all():
             raise ValueError(
                 "The summary table of the transformed data has "
                 "missing or non-finite values, likely because some "
@@ -882,7 +1423,9 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             elif beside:
                 ylab = "Percentage"
             else:
-                ylab = f"Cell % within {x} by {by}"
+                # the axis holds proportions, so it is named for them;
+                #   the legend names by, so it is not repeated here
+                ylab = f"Proportion within {x}"
         if digits_d_user is None:
             digits_d = 2
 
@@ -954,32 +1497,120 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             digits_d=digits_d, val_label=val_label,
         )
 
+    if form == "profile":
+        # one point per category of x, connected across the
+        #   categories, one profile per level of by: the interaction
+        #   plot of the analysis of variance. The connecting segments
+        #   are the purpose of the form. R analog: Chart.R profile ->
+        #   .plt.main(cat.x=TRUE, segments=TRUE) -> plt.plotly()
+        if isinstance(tbl, pd.DataFrame):
+            groups = [(str(b), tbl.columns, tbl.loc[b])
+                      for b in tbl.index]
+        else:
+            groups = [(None, tbl.index, tbl)]
+        cats = [str(c) for c in groups[0][1]]
+        pos = list(range(1, len(cats) + 1))
+        # an empty cell stays NaN, which plotly draws as a gap
+        groups = [(nm, pos, vals.to_numpy(dtype=float).tolist())
+                  for nm, _, vals in groups]
+        vals = tbl.to_numpy(dtype=float).ravel()
+        lo, hi = float(np.nanmin(vals)), float(np.nanmax(vals))
+        # the value axis of a profile is y, so origin_y sets where
+        #   it begins, as it does for the dot chart
+        if origin_y is not None:
+            lo, hi = min(lo, origin_y), max(hi, origin_y)
+        axT2 = pretty(lo, hi)
+        from .plotly_utils import axis_format
+        y_lab = (ylab_user if ylab_user is not None
+                 else "Count" if y_ser is None and stat_x == "count"
+                 else ylab)
+        fig = plt_plotly(
+            groups, by_name=by,
+            fill=(fill if isinstance(fill, (list, tuple))
+                  else [fill] if fill is not None
+                  else _profile_fill(theme)),
+            pt_size=1.5 * pt_size,
+            x_lab=x if xlab is None else xlab, y_lab=y_lab,
+            ax={"axT1": pos, "axL1": cats, "axT2": axT2,
+                "axL2": axis_format(axT2, digits_d, axis_fmt,
+                                    axis_y_pre)},
+            gridT1=pos, gridT2=axT2,
+            # no automatic title: it would only repeat the axis labels
+            main=None if not main else main,
+            digits_d=digits_d,
+            connect=True if segments is None else bool(segments),
+            pt_opacity=1,
+            style_opts=None)
+        pad = 0.04 * (axT2[-1] - axT2[0])
+        fig.update_yaxes(range=[axT2[0] - pad, axT2[-1] + pad])
+        fig.update_xaxes(range=[0.5, len(cats) + 0.5])
+        if rotate_x:
+            fig.update_xaxes(tickangle=-rotate_x)
+        if rotate_y:
+            fig.update_yaxes(tickangle=-rotate_y)
+        return fig
+
     if form == "dot":
-        # tbl is always a Series here (by= was rejected above)
+        quiet_use = resolve_quiet(quiet)
+        pt_op = 1 - (get_option("trans_pt_fill", 0.10)
+                     if transparency is None else transparency)
+        if isinstance(tbl, pd.DataFrame):
+            # by=: one series of dots per level of by, drawn as the
+            #   paired geometry, one column per level. A two-level by
+            #   with a stat already lists its difference as the Diff
+            #   row of the summary table. R analog: Chart.R dot by
+            #   reshape into the paired path
+            ydf = tbl.T.reindex([c for c in x_order if c in tbl.columns])
+            ydf.columns = [str(c) for c in ydf.columns]
+            cats = [str(c) for c in ydf.index]
+            val_lab = (xlab if xlab else ylab_user if ylab_user
+                       else "Count" if y_ser is None else ylab)
+            return _dot_paired(
+                cats, ydf.reset_index(drop=True), sort, sort_miss,
+                origin_x,
+                show_diff=not quiet_use and y_ser is None,
+                x_name=x,
+                fill=fill, border=color, pt_size=pt_size,
+                x_lab=val_lab, y_lab=x, digits_d=digits_d,
+                pt_opacity=pt_op,
+                main=None if not main else main,
+                legend_title=(legend_title if legend_title is not None
+                              else by),
+                axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+                rotate_x=rotate_x, rotate_y=rotate_y,
+                segments_x=(True if segments_x is None
+                            else segments_x),
+            )
+
         cats = [str(c) for c in tbl.index]
         vals = tbl.to_numpy(dtype=float)
+        # the length of the segment carries the value, so the value
+        #   axis begins at zero unless an origin is specified
+        org_in = origin_x if horiz else origin_y
         origin, gridT = _dot_origin_grid(
-            vals,
-            origin_in=origin_x if horiz else origin_y,
+            vals, origin_in=0 if org_in is None else org_in,
             is_counts=True if y_ser is None else None)
-        cat_lab = x if xlab is None else xlab
         val_lab = ylab                 # set with tbl above
-        if main is None:
-            main = build_title(x, y_name=y_name, stat=stat)
-        elif main == "":
-            main = None
+        if horiz:
+            # the value axis takes the plotted quantity, from xlab or
+            #   the statistic; the category axis takes x's own name
+            x_lab_arg = xlab if xlab is not None else val_lab
+            y_lab_arg = x
+        else:
+            x_lab_arg = xlab if xlab is not None else x
+            y_lab_arg = val_lab
+        # the value axis already names the plotted quantity, so an
+        #   unrequested title would only repeat it
         return dot_plotly(
             cats, vals,
             orientation="h" if horiz else "v",
             fill=fill, border=color,
             pt_size=pt_size,
-            x_lab=val_lab if horiz else cat_lab,
-            y_lab=cat_lab if horiz else val_lab,
+            x_lab=x_lab_arg, y_lab=y_lab_arg,
             digits_d=digits_d,
-            pt_opacity=1 - (get_option("trans_pt_fill", 0.10)
-                            if transparency is None
-                            else transparency),
-            gridT=gridT, origin_x=origin, main=main,
+            pt_opacity=pt_op,
+            gridT=gridT, origin_x=origin,
+            main=None if not main else main,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
             axis_y_pre=axis_y_pre,
             rotate_x=rotate_x, rotate_y=rotate_y,
@@ -1041,6 +1672,11 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         labels_size=0.90 if labels_size is None else labels_size,
         labels_color=labels_color,
         labels_decimals=labels_decimals,
+        # applied only when given; R cuts by share, which a single
+        #   series of a statistic does not carry, nor outside labels
+        labels_cut=(None if (labels_position == "out" or (
+            isinstance(tbl, pd.Series) and y_ser is not None))
+            else labels_cut),
         legend_title=legend_title, legend_position=legend_position,
         legend_labels=legend_labels, legend_horiz=legend_horiz,
         legend_size=legend_size, legend_abbrev=legend_abbrev,

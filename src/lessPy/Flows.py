@@ -109,7 +109,11 @@ def Flows(value, stage1, stage2, stage3=None, data=None,
                    y=min(0.98, y_dom[1] + 0.03),
                    xanchor="center", yanchor="top",
                    font=dict(size=round(18 * labels_size))),
-        margin=dict(t=90, r=30, b=30, l=30),
+        # the top margin only needs to clear the title, which is
+        #   positioned in container coordinates; a fixed 90 left a
+        #   large gap below it
+        margin=dict(t=max(30, round(18 * labels_size * 2.2)),
+                    r=30, b=30, l=30),
         font=dict(size=round(15 * labels_size)),
         template=None,
         paper_bgcolor=to_hex(get_option("window_fill", "white")))

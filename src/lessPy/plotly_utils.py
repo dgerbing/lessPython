@@ -436,14 +436,56 @@ def apply_font_size(fig, mult):
     return fig
 
 
+def add_subtitle(fig, sub):
+    """A subtitle beneath the title, or at the top when there is no
+    title: sub_size (default 0.75) of the title size, in sub_color
+    (default main_color). plotly's title.subtitle where the installed
+    plotly has it (5.23+), else a smaller second line of the title.
+    R analog: the sub parameter with style(sub_color=, sub_size=)"""
+    title_size = round(16 * get_option("main_size", 1))
+    size = round(title_size * get_option("sub_size", 0.75) / 0.75
+                 * 0.75)
+    color = to_hex(get_option("sub_color",
+                              get_option("main_color",
+                                         get_option("lab_color",
+                                                    "black"))))
+    main = fig.layout.title.text or ""
+    try:
+        if main:
+            fig.update_layout(title=dict(subtitle=dict(
+                text=sub, font=dict(size=size, color=color))))
+        else:                       # no title: the subtitle heads it
+            fig.update_layout(title=dict(
+                text=sub, font=dict(size=size, color=color)))
+    except ValueError:              # plotly without title.subtitle
+        fig.update_layout(title=dict(text=(
+            (main + "<br>" if main else "")
+            + f"<span style='font-size:{size}px;color:{color}'>"
+            + f"{sub}</span>")))
+    # anchored to the top of the figure, so the subtitle sits in the
+    #   margin above the panel rather than against its edge
+    fig.update_layout(title=dict(yref="container", y=0.98,
+                                 yanchor="top"))
+    if fig.layout.title.x is None:
+        fig.update_layout(title=dict(x=0.5, xanchor="center"))
+    top = fig.layout.margin.t
+    need = (round(title_size * 2.2) if main else 0) + 2 * size + 24
+    if top is None or top < need:
+        fig.update_layout(margin=dict(t=need))
+    return fig
+
+
 def font_scaled(func):
     """Wrap a plot function so a font_size= keyword scales the text
-    of the returned figure (font_size=1 is a no-op)."""
+    of the returned figure (font_size=1 is a no-op), and a sub=
+    keyword adds a subtitle beneath the title."""
     import functools
 
     @functools.wraps(func)
-    def wrapper(*args, font_size=1, **kwargs):
+    def wrapper(*args, font_size=1, sub=None, **kwargs):
         fig = func(*args, **kwargs)
+        if sub and hasattr(fig, "layout"):
+            add_subtitle(fig, sub)
         try:
             if font_size and font_size != 1 and hasattr(fig, "layout"):
                 apply_font_size(fig, font_size)
@@ -476,9 +518,9 @@ def square_layout(main=False, side=460):
 
 
 def facet_fig(n_rows, n_cols=1):
-    """Facet panel grid on shared axes; row n_rows is the BOTTOM
-    row, where the first facet levels draw (the lattice as.table
-    default, as in the faceted VBS)."""
+    """Facet panel grid on shared axes; row 1 is the TOP row, where
+    the first facet levels draw (reading order, lessR as.table=
+    TRUE)."""
     from plotly.subplots import make_subplots
     # plotly caps spacing at 1/(n-1); keep a 10% margin under it so
     # many-panel grids (e.g. 25 facet levels) still lay out
@@ -495,11 +537,12 @@ def facet_fig(n_rows, n_cols=1):
 
 
 def facet_pos(i, n_lvl, n_col):
-    """Subplot (row, col) of facet level i: the lattice fill
-    order — bottom row first, left to right, then upward, so the
-    bottom row is always full and carries the x ticks."""
-    n_row = math.ceil(n_lvl / max(1, n_col))
-    return n_row - i // n_col, i % n_col + 1
+    """Subplot (row, col) of facet level i: reading order, top row
+    first, left to right, then downward, as lessR now fills its
+    lattice panels (as.table=TRUE) and as ggplot2 does. A ragged
+    grid leaves its empty cells at the bottom right."""
+    n_col = max(1, n_col)
+    return i // n_col + 1, i % n_col + 1
 
 
 def facet_cell_label(name, level):
@@ -535,7 +578,7 @@ def facet_panels(facet, facet_order, facet2=None,
                  facet2_order=None, facet_name=None,
                  facet2_name=None, n_col=1):
     """Panel plan shared by the faceted renderers. One facet:
-    the established bottom-up fill (facet_pos) with plain level
+    the top-down reading-order fill (facet_pos) with plain level
     strip labels. Two facets: the facet_cells2 top-down grid
     (rows = facet2, cols = facet1) with  Var = "level"  cell
     labels; n_col is then fixed by the facet1 levels. Returns
@@ -565,8 +608,9 @@ def finish_facet(fig, levels, ax, x_lab, y_lab, gridT1,
     axes on a common scale (y label on the middle panel of the
     first column), x ticks on the bottom row only, vertical grid
     and a frame per panel, and a shaded strip label above each
-    panel. levels fill bottom-up, left to right (facet_pos):
-    levels[0] draws bottom-left. n_col > 1 lays the panels out
+    panel. levels fill top-down, left to right (facet_pos):
+    levels[0] draws top-left; the x ticks go on the lowest panel
+    of each column. n_col > 1 lays the panels out
     as a grid (the lattice n_col). y_cat: category labels for
     panels whose y axis is categorical (the faceted bar chart);
     ax then needs only axT1/axL1. pos: explicit (row, col) per
@@ -599,6 +643,8 @@ def finish_facet(fig, levels, ax, x_lab, y_lab, gridT1,
         s_size = max(8, min(s_size,
                             int(panel_px / (0.58 * max_len))))
 
+    occupied = (set(pos) if pos is not None
+                else {facet_pos(i, n, n_col) for i in range(n)})
     for i, lvl in enumerate(levels):
         r, c = pos[i] if pos is not None else facet_pos(i, n,
                                                         n_col)
@@ -614,13 +660,21 @@ def finish_facet(fig, levels, ax, x_lab, y_lab, gridT1,
                       range=[0, float(ax["axT2"][-1]) * 1.04])
         else:
             ay = axis_cat(show_ylab)
+            # every category labeled, as lattice does, rather than
+            #   the every-other labels plotly falls back to in a
+            #   short panel
             ay.update(categoryorder="array",
                       categoryarray=list(y_cat),
+                      tickmode="array", tickvals=list(y_cat),
+                      ticktext=list(y_cat),
                       showticklabels=c == 1)
         fig.update_yaxes(row=r, col=c, **ay)
-        if r == n_row:
+        lowest = r == n_row or (r + 1, c) not in occupied
+        if lowest:
+            # a shared x axis hides the labels above the bottom row,
+            #   so a ragged grid's lowest panel turns its own back on
             fig.update_xaxes(
-                row=r, col=c,
+                row=r, col=c, showticklabels=True,
                 **axis_num(x_lab if c == mid_c else "",
                            ax["axT1"], ax["axL1"]))
         else:

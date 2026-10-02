@@ -165,12 +165,13 @@ def test_facet_panels(d):
     boxes = [t for t in fills if t.hoverinfo == "text"]
     assert len(boxes) == 2
     # per-panel statistics: each box matches its level's hinges;
-    # first level in the BOTTOM band (y centered at 0)
+    # first level in the TOP band (reading order): A at y=3, B at 0
     for i, lvl in enumerate(["A", "B"]):
         xg = d.loc[d["Grp"] == lvl, "Score"].to_numpy()
         _, q1, _, q3, _ = five_num(xg)
         bx = [b for b in boxes
-              if min(b.y) == pytest.approx(i * 3.0, abs=0.5)][0]
+              if min(b.y) == pytest.approx((1 - i) * 3.0,
+                                           abs=0.5)][0]
         assert min(bx.x) == pytest.approx(q1)
         assert max(bx.x) == pytest.approx(q3)
     # strip label rectangles and level annotations

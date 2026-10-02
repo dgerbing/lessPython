@@ -11,7 +11,7 @@
 # not at the two zero-closing endpoints.
 #
 # facet= draws one panel per level on the shared breaks and a
-# shared count scale, first level in the bottom panel — an
+# shared count scale, first level in the top panel — an
 # EXTENSION beyond R, where X() still stops with "Facets not yet
 # working with density or freq_poly plots". With by=, each panel
 # overlays one polygon per group present in it; proportions are

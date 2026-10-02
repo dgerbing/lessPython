@@ -17,7 +17,9 @@
 # Deliberate deviations from the R source:
 #   - Theme-dependent sequential palettes (.scale.clr) are not
 #     ported; fills default to BASE_COLORS keyed by top-level
-#     category (lessR's default "colors" theme). For the same
+#     category (lessR's default "colors" theme). A sequential
+#     palette NAMED in fill= is ported (read by magnitude off the
+#     palette's ramp, R's pal_explicit branch). For the same
 #     reason the per-facet luminance remap (fill_vec_byfac) has
 #     no counterpart: every facet panel uses the global fills.
 
@@ -25,6 +27,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from .getColors import _SEQ_NAMES
 from .utils import STAT_FUN, get_option
 from .plotly_utils import (
     BASE_COLORS, facet_layout, plotly_style, to_hex,
@@ -43,9 +46,15 @@ def hier_aggregate(x, by=None, y=None, stat=None, facet=None,
     R analog: .hier_aggregate()"""
     path = pd.DataFrame({x_name: x.astype(str).values})
     lvl_names = [x_name]
-    if by is not None:
-        by_col = by_name or "by"
-        path[by_col] = by.astype(str).values
+    # a list of by variables nests one level deeper for each, the
+    #   depth that the hierarchical forms accept
+    by_list = (list(by) if isinstance(by, (list, tuple))
+               else [] if by is None else [by])
+    nm_list = (list(by_name) if isinstance(by_name, (list, tuple))
+               else [by_name or "by"])
+    for k, b in enumerate(by_list):
+        by_col = nm_list[k] if k < len(nm_list) else f"by{k + 1}"
+        path[by_col] = b.astype(str).values
         lvl_names.append(by_col)
     n_levels = len(lvl_names)
 
@@ -124,12 +133,46 @@ def hier_aggregate(x, by=None, y=None, stat=None, facet=None,
                 n_levels=n_levels, has_y=y is not None)
 
 
-def hier_color_resolve(top_levels, fill=None):
+def _seq_palette_fill(top_levels, pal, x, y, stat):
+    """A named sequential palette read by magnitude: each top-level
+    category takes the shade of the palette's 256-color ramp at the
+    position of its count (or stat of y) between the smallest and
+    the largest, so larger is darker in the palette's own hues.
+    R analog: the pal_explicit branch of .hier_color_resolve()."""
+    from .getColors import getColors, hcl
+    if y is None:
+        stats = x.value_counts()
+    else:
+        vals = pd.to_numeric(y, errors="coerce")
+        vals = vals.where(np.isfinite(vals), 0)
+        stats = vals.groupby(x.astype(str)).agg(
+            STAT_FUN[(stat or "sum").lower()])
+    stats = stats.reindex([str(lv) for lv in top_levels]).to_numpy(
+        dtype=float)
+    lo, hi = stats.min(), stats.max()
+    if len(top_levels) < 2 or hi - lo <= 0:
+        # no range to read a shade off: one mid-luminance color
+        #   in the default theme's hue, as R
+        return {lv: hcl(240, 75, 60) for lv in top_levels}
+    ramp = [c[:7] for c in getColors(pal, n=256, quiet=True)]
+    pos = (stats - lo) / (hi - lo)       # 0 = smallest, 1 = largest
+    idx = np.round(pos * (len(ramp) - 1)).astype(int)
+    return {lv: ramp[i] for lv, i in zip(top_levels, idx)}
+
+
+def hier_color_resolve(top_levels, fill=None, x=None, y=None,
+                       stat=None):
     """Hex color per top-level category, inherited down the tree.
-    R analog: .hier_color_resolve(), without the theme-dependent
-    sequential-palette branch."""
+    R analog: .hier_color_resolve(). A sequential palette name
+    (fill="greens") is read by magnitude from x and y; the
+    theme-dependent sequential branch (.scale.clr) is not
+    ported."""
     if fill is None:
         fill = BASE_COLORS
+    if (isinstance(fill, str) and fill.lower() in _SEQ_NAMES
+            and x is not None):
+        return _seq_palette_fill(top_levels, fill.lower(), x, y,
+                                 stat)
     if isinstance(fill, dict):
         base = list(fill.values()) or ["#CCCCCC"]
         return {lv: to_hex(fill.get(lv, base[i % len(base)]))

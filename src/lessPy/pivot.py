@@ -147,12 +147,15 @@ def _pivot_table(data, by, show_n):
     if len(by) > 2:
         raise ValueError('compute="table" supports one or two '
                          "by variables")
-    # two-way: long-form counts, second by var first, as R
+    # two-way: long-form counts in the order the by variables were
+    #   given, with the first varying fastest. lessR appended the
+    #   tabulated variable instead until 2026-08, which rotated the by
+    #   variables out of the order the user gave.
     b1, b2 = by
     g = _cat_frame(data, by)
     ct = (g.groupby([b1, b2], observed=False, dropna=False)
           .size().reset_index(name="n"))
-    ct = ct[[b2, b1, "n"]]
-    ct = ct.sort_values([b1, b2], na_position="last",
+    ct = ct[[b1, b2, "n"]]
+    ct = ct.sort_values([b2, b1], na_position="last",
                         kind="stable").reset_index(drop=True)
     return ct

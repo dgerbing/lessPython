@@ -16,8 +16,9 @@
 # their group's color rather than firebrick, and a horizontal
 # legend at the top. With facet=, one full VBS per level in its
 # own band on the shared value axis — statistics computed per
-# panel, first level in the BOTTOM band (the lattice as.table
-# default), a shaded strip label above each band, and per-panel
+# panel, first level in the TOP band (reading order, as lessR now
+# fills its lattice panels), a shaded strip label above each band,
+# and per-panel
 # box hues (.plt.fill) under the common slate violin fill.
 # Deviations, by design:
 #   - jitter_y is the strip half-spread as a fraction of the
@@ -263,16 +264,18 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
     rng_ = np.random.default_rng(n)      # reproducible spread
     jy = 0.5 if jitter_y is None else float(jitter_y)
 
-    # facet units, first level in the BOTTOM band (lattice);
-    # facet2 stacks one section of facet bands per level, bottom
-    # section first, each topped by a  Var = "level"  strip
+    # facet units, first level in the TOP band (reading order, as
+    # lessR as.table=TRUE); facet2 stacks one section of facet
+    # bands per level, top section first, each topped by a
+    # Var = "level"  strip
     _SEC_EXTRA = 1.8       # extra y units above each section
     sec_strips = []        # (y0, y1, label) per facet2 section
     if facet is None:
         units = [dict(mask=np.ones(n, dtype=bool), yc=0.0,
                       strip=None, ci=0, hov="")]
     elif facet2 is None:
-        units = [dict(mask=facet == lv, yc=ui * _BAND,
+        k1 = len(facet_order)
+        units = [dict(mask=facet == lv, yc=(k1 - 1 - ui) * _BAND,
                       strip=str(lv), ci=ui,
                       hov=f"<br>{facet_name}: {lv}")
                  for ui, lv in enumerate(facet_order)]
@@ -281,12 +284,13 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
         k1 = len(facet_order)
         stride = k1 * _BAND + _SEC_EXTRA
         units = []
+        k2 = len(facet2_order)
         for i2, lv2 in enumerate(facet2_order):
-            y_base = i2 * stride
+            y_base = (k2 - 1 - i2) * stride
             for i1, lv1 in enumerate(facet_order):
                 units.append(dict(
                     mask=(facet == lv1) & (facet2 == lv2),
-                    yc=y_base + i1 * _BAND,
+                    yc=y_base + (k1 - 1 - i1) * _BAND,
                     strip=str(lv1), ci=i1,
                     hov=(f"<br>{facet_name}: {lv1}"
                          f"<br>{facet2_name}: {lv2}")))
@@ -503,9 +507,9 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
             ))
 
     if sec_strips:
-        y_top = sec_strips[-1][1] + 0.05
+        y_top = max(st[1] for st in sec_strips) + 0.05
     elif n_fac > 1:
-        y_top = units[-1]["yc"] + _STRIP[1] + 0.05
+        y_top = max(u["yc"] for u in units) + _STRIP[1] + 0.05
     else:
         y_top = 1.05
     fig.update_layout(

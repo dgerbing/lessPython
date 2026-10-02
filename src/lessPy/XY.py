@@ -42,9 +42,10 @@
 # shared scatter_matrix helper (plt_mat_plotly). The faceted
 # scatter prints a summary table per grouping variable
 # (facet_summary ~ .vbs_summary_table).
-# The categorical-x delegations are not ported (bubble and
-# Cleveland displays are internal-only; categorical data
-# belong to Chart()). R's form="hexbin" is dropped by design:
+# A categorical x or y is refused with the call of the view it
+# belongs to, as XY.R's master control funnel now does (Aug
+# 2026); the dot plots XY() once drew for row_names and for a
+# categorical variable with stat= are Chart(form="dot")'s. R's form="hexbin" is dropped by design:
 # plotly has no hexbin trace.
 
 import math
@@ -262,7 +263,7 @@ def _xy_facet(xv, yv, by_arr, by_order, facet_arr, facet_order,
               facet2_name=None, n_col=1):
     """One scatter panel per facet level on shared axes,
     following the faceted-histogram conventions (_hs_facet):
-    first level on the bottom panel, strip labels, legend
+    first level on the top panel, strip labels, legend
     entries from the first panel only. facet2: the two-facet
     grid, rows = facet2 levels."""
     labels, pos, sel, n_row_g, n_col = facet_panels(
@@ -738,7 +739,7 @@ def _ts_facet(xv, yv, facet_arr, facet_order, fill0, border0,
               facet2_order=None, facet2_name=None, n_col=1):
     """One time-series panel per facet level on shared axes,
     following the faceted-scatter conventions (_xy_facet):
-    first level on the bottom panel, strip labels. The x axis
+    first level on the top panel, strip labels. The x axis
     uses plotly's native date ticks, as the single-panel time
     series does. R analog: the lattice cont_cont path for a
     date x. facet2: the two-facet grid, rows = facet2 levels."""
@@ -790,7 +791,7 @@ def _ts_facet(xv, yv, facet_arr, facet_order, fill0, border0,
                     if "markers" in mode_pts else None),
             line=dict(color=to_hex(border0), width=1.5),
             hovertemplate=hover, showlegend=False,
-        ), row=row, col=col)           # first level bottom
+        ), row=row, col=col)           # first level top-left
 
     finish_facet(fig, labels, ax, x_lab, y_lab,
                  gridT1=None, style_opts=style_opts,
@@ -988,10 +989,11 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
        segments_x=None, segments_y=None,
        add=None, x1=None, y1=None, x2=None, y2=None,
        fill=None, color=None, transparency=None,
-       pt_size=1, pt_shape="circle", jitter_x=None, jitter_y=None,
+       pt_size=1, pt_shape="circle", line_width=1.5,
+       jitter_x=None, jitter_y=None,
        MD_cut=0, out_cut=0, out_shape="circle-open", out_size=1,
        ID=None, ID_color="gray50", ID_size=0.6,
-       fit="off", fit_power=1, fit_se=None, plot_errors=False,
+       fit="off", fit_power=1, fit_se=None, fit_errors=False,
        fit_new=None,
        fit_color=None, fit_lwd=None, span=0.75,
        ellipse=0, ellipse_fill=None, ellipse_color=None,
@@ -1007,7 +1009,8 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
        axis_fmt="K", axis_x_pre="", axis_y_pre="",
        rotate_x=0, rotate_y=0, scale_x=None, scale_y=None,
        xlab=None, ylab=None, main=None, digits_d=None,
-       quiet=None):
+       quiet=None,
+       plot_errors=None):
     """Analytic view of the relationship between two numerical
     variables, optionally grouped (by=). A date x displays as a
     time series. Variables are strings naming columns of the
@@ -1051,19 +1054,25 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
     if center_line not in ("off", "mean", "median", "zero"):
         raise ValueError(
             'center_line: "off", "mean", "median", or "zero"')
+    if plot_errors is not None:
+        raise ValueError(
+            "Parameter plot_errors has been renamed to fit_errors. "
+            "The segments it draws join each point to the fitted line, "
+            "so they are the errors of the fit, and the name now says "
+            "which fit they belong to, as fit, fit_color, and fit_se do.")
     if center_line != "off" and facet is not None:
         raise ValueError(
             "center_line draws on a single panel: no facet=")
-    if plot_errors:
+    if fit_errors:
         if fit == "off":
             raise ValueError(
-                "plot_errors draws residual segments to the fit "
+                "fit_errors draws residual segments to the fit "
                 "line: specify fit=")
         if form != "scatter":
-            raise ValueError('plot_errors applies to form="scatter"')
+            raise ValueError('fit_errors applies to form="scatter"')
         if facet is not None:
             raise ValueError(
-                "plot_errors draws on a single panel: no facet=")
+                "fit_errors draws on a single panel: no facet=")
     if (scale_x is not None or scale_y is not None) \
             and facet is not None:
         raise ValueError(
@@ -1152,39 +1161,43 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             xlab, ylab, main, digits_d, quiet),
             rotate_x, rotate_y)
 
-    # ----- row_names: the data-frame row labels as a categorical
-    # axis -> a Cleveland dot plot, delegated to Chart(form="dot")
-    # (categorical variables live in Chart), the numeric variable
-    # its value ------------------------------------------------------
+    # ----- row_names: each row label identifies a single case, a
+    # categorical axis that belongs to Chart(form="dot")
+    # R analog: XY.R categorical refusal, x.unique branch
     _ROW_KW = ("row_names", "row.names")
     x_row = isinstance(x, str) and x in _ROW_KW
     y_row = isinstance(y, str) and y in _ROW_KW
     if x_row or y_row:
-        from .Chart import Chart
-        val = y if x_row else x
-        if (not isinstance(val, str) or val in _ROW_KW
-                or not pd.api.types.is_numeric_dtype(
-                    get_column(data, val, "x" if x_row else "y"))):
+        cont = y if x_row else x
+        raise TypeError(
+            "XY() requires a continuous x and a continuous y.\n"
+            "row_names is categorical.\n\n"
+            "Each level of row_names identifies a single case, so\n"
+            f"  display the values of {cont} directly with Chart():\n"
+            f"  Chart('row_names', y='{cont}', form='dot')")
+
+    # stat, sort, and the segments_x/_y droplines served the dot
+    # plot XY() once drew of a categorical variable, now Chart()'s;
+    # R's stat aggregates y within bins of x (n_bins), not ported
+    if stat is not None:
+        cat_, cont = "x", "y"
+        for a, b in ((x, y), (y, x)):
+            if (isinstance(a, str) and isinstance(b, str)
+                    and a in data.columns and b in data.columns
+                    and not pd.api.types.is_numeric_dtype(data[a])):
+                cat_, cont = a, b
+        raise ValueError(
+            "stat in XY() aggregates y within bins of x (n_bins), "
+            "which is not yet ported. For a statistic of a numerical "
+            "variable across the levels of a categorical one, use "
+            f"Chart():\n  Chart('{cat_}', y='{cont}', stat='{stat}')")
+    for nm, v in (("sort", None if sort == "0" else sort),
+                  ("segments_x", segments_x),
+                  ("segments_y", segments_y)):
+        if v is not None:
             raise ValueError(
-                "row_names pairs with one numerical variable")
-        names = data.index.astype(str)
-        d2 = data.copy()
-        d2["row_names"] = pd.Categorical(
-            names, categories=list(dict.fromkeys(names)))
-        # no by= here, so a single scatterplot fill (XY's pt_color
-        # default) rather than Chart's per-category dot hues
-        dot_fill = (get_option("pt_color", "#324E5C")
-                    if fill is None else fill)
-        # XY/lessR names droplines by the axis they reach (segments_y
-        # = to the y axis, i.e. horizontal); Chart names them by
-        # direction (segments_x = horizontal) -- so they swap
-        return Chart(
-            "row_names", y=val, data=d2, form="dot", horiz=y_row,
-            sort=sort, segments_x=segments_y, segments_y=segments_x,
-            fill=dot_fill, color=color, pt_size=pt_size, main=main,
-            xlab=xlab, ylab=ylab, digits_d=digits_d,
-            rotate_x=rotate_x, rotate_y=rotate_y,
-            axis_fmt=axis_fmt, quiet=quiet)
+                f"{nm} applies to the dot plot of a categorical "
+                "variable, which is Chart(form='dot'), not XY()")
 
     # ----- resolve variables and filter ---------------------------
     # ".Index" is the row-number pseudo-variable (1..n) for a run
@@ -1204,27 +1217,6 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
     if index_y:
         y = "Index"
 
-    # stat= aggregates a numerical variable by a categorical one and
-    # shows a Cleveland dot plot -- delegate to Chart(form="dot"),
-    # its tested renderer (categorical variables live in Chart)
-    if stat is not None:
-        from .Chart import Chart
-        x_num = pd.api.types.is_numeric_dtype(x_ser)
-        y_num = pd.api.types.is_numeric_dtype(y_ser)
-        common = dict(
-            data=data, by=by, facet=facet, form="dot", stat=stat,
-            sort=sort, fill=fill, color=color,
-            transparency=transparency, pt_size=pt_size, main=main,
-            digits_d=digits_d, rotate_x=rotate_x, rotate_y=rotate_y,
-            axis_fmt=axis_fmt, quiet=quiet)
-        if not x_num and y_num:            # categorical x, value y
-            return Chart(x, y=y, xlab=xlab, ylab=ylab, **common)
-        if x_num and not y_num:            # value x, categorical y
-            return Chart(y, y=x, horiz=True, xlab=xlab, ylab=ylab,
-                         **common)
-        raise ValueError(
-            "XY() with stat= needs one categorical and one "
-            "numerical variable (a Cleveland dot plot)")
     by_ser = get_column(data, by, "by") if by is not None else None
     (facet_ser, facet_name,
      facet2_ser, facet2_name) = resolve_facet(data, facet, "XY")
@@ -1268,33 +1260,40 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             pass
 
     is_date = pd.api.types.is_datetime64_any_dtype(x_ser)
-    # a categorical/continuous mix with facet= is X()'s display:
-    # redirect, as XY.R's Trellis check does
-    if facet is not None and not is_date:
-        x_num = pd.api.types.is_numeric_dtype(x_ser)
-        y_num = pd.api.types.is_numeric_dtype(y_ser)
-        if x_num != y_num:
-            cont, cat_ = (x, y) if x_num else (y, x)
-            f_txt = ("[" + ", ".join(f"'{f}'" for f in facet)
-                     + "]"
-                     if isinstance(facet, (list, tuple))
-                     else f"'{facet}'" if isinstance(facet, str)
-                     else f"'{facet_name}'")
+    # XY() displays the relationship of two continuous variables; a
+    # categorical x or y belongs to another view, so name its call
+    # rather than render. R analog: XY.R master control funnel
+    x_cat = not is_date and not pd.api.types.is_numeric_dtype(x_ser)
+    y_cat = not pd.api.types.is_numeric_dtype(y_ser)
+    if x_cat or y_cat:
+        head = "XY() requires a continuous x and a continuous y.\n"
+        if x_cat and y_cat:
             raise TypeError(
-                "XY() requires a continuous x and a continuous "
-                "y.\nFor a faceted distribution of the "
-                f"continuous {cont} across the levels\nof the "
-                f"categorical {cat_}, use X() with a by "
-                f"variable:\n  X('{cont}', by='{cat_}', "
-                f"facet={f_txt})")
-    for nm, s in ((x, x_ser), (y, y_ser)):
-        if s is x_ser and is_date:
-            continue
-        if not pd.api.types.is_numeric_dtype(s):
+                head + f"Both {x} and {y} are categorical.\n\n"
+                "For two categorical variables, use Chart() with a "
+                f"by variable:\n  Chart('{x}', by='{y}', "
+                "form='bubble')")
+        cont, cat_, cat_s = ((y, x, x_ser) if x_cat
+                             else (x, y, y_ser))
+        if not cat_s.dropna().duplicated().any():
             raise TypeError(
-                f"XY() analyzes the relationship of two numerical "
-                f"variables, but '{nm}' is {s.dtype}. For a "
-                "categorical variable use Chart().")
+                head + f"{cat_} is categorical.\n\n"
+                f"Each level of {cat_} identifies a single case, so\n"
+                f"  display the values of {cont} directly with "
+                f"Chart():\n  Chart('{cat_}', y='{cont}', "
+                "form='dot')")
+        f_txt = ""
+        if facet is not None:
+            f_txt = (", facet=[" + ", ".join(f"'{f}'" for f in facet)
+                     + "]" if isinstance(facet, (list, tuple))
+                     else f", facet='{facet}'"
+                     if isinstance(facet, str)
+                     else f", facet='{facet_name}'")
+        raise TypeError(
+            head + f"{cat_} is categorical.\n\n"
+            f"For the distribution of the continuous {cont} across\n"
+            f"  the levels of the categorical {cat_}, use X() with "
+            f"a by variable:\n  X('{cont}', by='{cat_}'{f_txt})")
 
     # ts_NA= replaces missing y with a set value before the NA
     # rows are dropped, so a gap in the series becomes that value
@@ -1659,17 +1658,17 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
 
     # ----- fit lines and SE bands ---------------------------------
     # with by= the bands default off, as in R (XY.R line ~484);
-    # plot_errors shows residuals, not a band, so it too defaults
+    # fit_errors shows residuals, not a band, so it too defaults
     # the band off (XY.R line ~483)
     if fit_se is None:
-        fit_se = 0 if plot_errors else (0.95 if by is None else 0)
+        fit_se = 0 if fit_errors else (0.95 if by is None else 0)
     se_levels = [lv for lv in (fit_se if isinstance(
         fit_se, (list, tuple)) else [fit_se]) if lv]
     if form == "contour":              # R: no SE bands on contour
         se_levels = []
 
     fit_lines, se_polys, fit_stats = [], [], []
-    err_lines = []                     # plot_errors residual segments
+    err_lines = []                     # fit_errors residual segments
     if fit != "off":
         for nm, xg, yg in groups:
             if len(xg) < 2:
@@ -1678,7 +1677,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
                 xs, ys_s, f, se_f = _loess(xg, yg, span)
                 fit_lines.append({"name": nm, "x": xs, "y": f})
                 fit_stats.append((nm, fit, ys_s, f))
-                if plot_errors:
+                if fit_errors:
                     err_lines.append((xs, ys_s, f))
                 for lv in se_levels:
                     tq = sps.t.ppf((1 + lv) / 2, len(xs) - 1)
@@ -1692,7 +1691,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             fit_lines.append({"name": nm, "x": xs[okf],
                               "y": f[okf]})
             fit_stats.append((nm, fit, ys_s[okf], f[okf]))
-            if plot_errors:
+            if fit_errors:
                 err_lines.append((xs[okf], ys_s[okf], f[okf]))
             if fit == "lm":
                 for lv in se_levels:
@@ -1845,7 +1844,8 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         y_lab=y if ylab is None else ylab,
         ax=ax, gridT1=gridT1, gridT2=ax["axT2"],
         main=main, digits_d=digits_d,
-        connect=is_date or show_runs or index_x, is_date=is_date,
+        connect=is_date or show_runs or index_x, ln_width=line_width,
+        is_date=is_date,
         pt_opacity=1 - transparency,
         area_polys=area_polys,
         fit_lines=fit_lines, fit_color=fit_color, fit_lwd=fit_lwd,
@@ -1866,9 +1866,9 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         # .Index run chart, or a runs chart keeps its wide aspect)
         fig.update_layout(**square_layout(main=bool(main)))
 
-    # plot_errors: residual segment from each point to its fitted
+    # fit_errors: residual segment from each point to its fitted
     # value, drawn over the points (R plt.main.R ~1403, rgb 130,40,35)
-    if plot_errors and err_lines:
+    if fit_errors and err_lines:
         ex, ey = [], []
         for xs_, yo_, ff_ in err_lines:
             for i in range(len(xs_)):

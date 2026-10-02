@@ -52,8 +52,10 @@ import plotly.io as pio
 robust for large notebooks):
 
 - `pio.renderers.default = "png"` — requires the `kaleido`
-  package (`pip install kaleido`, or `conda install -c
-  conda-forge python-kaleido`).
+  renderer, installed with the `png` extra: `pip install
+  lessPython[png]` (or `conda install -c conda-forge
+  python-kaleido`). The extra pulls `plotly[kaleido]`, so plotly
+  and kaleido stay at compatible versions.
 
 With a renderer set, let the figure be a cell's last line, or
 call `.show()`:
@@ -92,8 +94,24 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   (`y=` with `stat=`). As in R, the second positional argument is
   `y`, the numeric variable being aggregated, so a second
   categorical variable is named: `by='Gender'`. Forms: bar,
-  pie/sunburst, dot, radar,
-  bubble, treemap, icicle. Numeric bars can be colored by value:
+  pie/sunburst, dot, profile, radar,
+  bubble, treemap, icicle; the hierarchical forms (treemap, icicle,
+  and pie with `by`, a sunburst) accept a list of `by` variables,
+  each one level deeper. The dot form is Cleveland's dot plot:
+  categories down the vertical axis (`horiz=False` for the other
+  orientation), the value axis from zero, one series per `by`
+  level; a pair of series — a two-level `by`, or
+  `y=['Pre', 'Post']` — is joined by a segment and ordered by its
+  difference. The profile form connects one point per category
+  of `x` across the categories, one profile per `by` level — the
+  interaction plot of a two-way ANOVA — with `origin_y=` setting
+  where the value axis begins and `facet=` drawing one panel per
+  level on a shared scale. A list of `x` variables that share one
+  response scale, such as Likert items
+  (`Chart(['m01', 'm02', 'm03'], data=d)`), draws the multi-item
+  stacked chart: one bar per item divided into its responses in a
+  divergent palette, ordered by the mean response, with the
+  frequencies and means at the console; `facet=` panels it. Numeric bars can be colored by value:
   `fill_split=v` (two colors split at `v`) or `fill_scaled=True`
   (an HCL gradient by distance from the split). `theme=` (green,
   slatered, sienna, blue, …) fills with a sequential palette in the
@@ -108,7 +126,11 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   default for unrotated vertical bars; a `~` in a label is a
   non-breaking space). Value labels: `labels=` chooses `"%"`,
   `"input"`, `"prop"`, or `"off"`, and `labels_decimals=` sets
-  their decimal places for bar, pie, and bubble. The legend of a
+  their decimal places for bar, pie, and bubble; `labels_cut=`
+  leaves off a bar label whose share falls below it.
+  `segments=False` draws a profile's points without the lines
+  that join them. `sub=` (also on `X()` and `XY()`) adds a
+  subtitle beneath the title, sized by the `sub_size` option. The legend of a
   two-variable bar chart is controlled by `legend_title=`,
   `legend_labels=` (rename the `by` levels), `legend_abbrev=n`
   (shorten title and labels), `legend_size=` (a text expansion
@@ -126,10 +148,13 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   aggregation and forecasting). `x=".Index"` makes a run chart
   (the row number, 1..n); `show_runs=True` adds the runs test
   (connected points, a median center line, the run analysis).
-  `x` or `y="row_names"` plots against the data-frame row names as
-  a Cleveland dot-plot axis. A categorical variable paired with
-  `stat=` (e.g. `stat='mean'`) gives a Cleveland dot plot of the
-  aggregate, ordered by `sort=`.
+  `x` and `y` are both continuous: a categorical variable belongs
+  to another view, and `XY()` names that call rather than drawing
+  it — `X('Salary', by='Dept')` for a distribution across groups,
+  `Chart('Dept', y='Salary', stat='mean')` for a statistic,
+  `Chart('row_names', y='Salary', form='dot')` for one value per
+  case, `Chart('Dept', by='Gender', form='bubble')` for two
+  categorical variables.
 - **`Flows(value, stage1, stage2, stage3=None, data=, ...)`** —
   Sankey flow diagram of `value` across two or three stages.
 

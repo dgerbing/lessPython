@@ -30,12 +30,18 @@ def test_pie_1d(d):
     assert fig.layout.title.text == "Count of Dept"
 
 
-def test_pie_hole_and_clamp():
+def test_pie_hole_honored_labels_dropped(capsys):
     s = pd.Series([3, 4, 5], index=list("abc"))
+    fig = pie_plotly(s)                        # default 0.62, labels in
+    assert fig.data[0].hole == 0.62
+    assert fig.data[0].textinfo == "text"
     fig = pie_plotly(s, hole=0.8)             # inside labels default
-    assert fig.data[0].hole == 0.62            # clamped
+    assert fig.data[0].hole == 0.8             # honored, not clamped
+    assert fig.data[0].textinfo == "none"      # no room for labels
+    assert 'labels_position="out"' in capsys.readouterr().out
     fig2 = pie_plotly(s, hole=0.8, labels_position="out")
-    assert fig2.data[0].hole == 0.8            # outside: no clamp
+    assert fig2.data[0].hole == 0.8
+    assert fig2.data[0].textinfo == "text"     # outside: labels kept
 
 
 def test_pie_grid(d):

@@ -27,7 +27,8 @@ class CorrelationResults:
                 f"r={self.r}, p={self.pvalue}>")
 
 
-def Correlation(x=None, y=None, data=None, miss="pairwise",
+def Correlation(x=None, y=None, data=None, filter=None,
+                miss="pairwise",
                 show="cor", method="pearson", brief=False,
                 digits_d=None, heat_map=True, main=None):
     """Correlation of two variables (with a significance test) or
@@ -42,6 +43,16 @@ def Correlation(x=None, y=None, data=None, miss="pairwise",
     if method not in ("pearson", "spearman", "kendall"):
         raise ValueError('method: "pearson", "spearman", '
                          '"kendall"')
+    # subset rows, as in ttest(), ANOVA() and Regression(). Correlation()
+    #   reaches its data by two routes, so filter whichever one carries
+    #   it, always before a variable list subsets the columns
+    if filter is not None:
+        if data is not None:
+            data = data.query(filter)
+        elif isinstance(x, pd.DataFrame):
+            x = x.query(filter)
+        else:
+            raise ValueError("filter needs data= or a DataFrame x")
     if y is not None:
         xv = _resolve1(x, data, "x")
         yv = _resolve1(y, data, "y")

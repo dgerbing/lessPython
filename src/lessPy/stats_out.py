@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sps
 
-from .utils import fmt, get_option
+from .utils import STAT_FUN, STAT_LBL, fmt, get_option
 
 
 def resolve_quiet(quiet):
@@ -159,31 +159,386 @@ def md_outliers(xv, yv, ids, MD_cut, out_cut):
     return out_idx, lines
 
 
-def chart_stats(x_ser, by_ser, y_ser, stat_lbl, x_name,
-                by_name, y_name, digits_d=2):
-    """Frequencies with proportions for one categorical
-    variable; cross-tabulation with a chi-square test with by=;
-    the per-level summary when y= is charted."""
-    lines = [f"--- {x_name} ---"]
-    if y_ser is not None:              # stat of y per level
-        g = y_ser.groupby(x_ser, observed=True)
-        agg = {"sd": "std"}.get(stat_lbl, stat_lbl)
-        tbl = pd.DataFrame({"n": g.size(),
-                            stat_lbl: g.agg(agg)})
-        lines += tbl.to_string(
-            float_format=lambda v: fmt(v, digits_d)).split("\n")
-    elif by_ser is None:               # one-way frequencies
-        cnt = x_ser.groupby(x_ser, observed=True).size()
-        tbl = pd.DataFrame({"n": cnt,
-                            "prop": cnt / cnt.sum()})
-        tbl.loc["Total"] = [cnt.sum(), 1.0]
-        lines += tbl.to_string(
-            float_format=lambda v: fmt(v, digits_d)).split("\n")
-    else:                              # two-way + chi-square
-        ct = pd.crosstab(by_ser, x_ser)
-        lines += ct.to_string().split("\n")
-        chi2, p, dof, _ = sps.chi2_contingency(ct.to_numpy())
+# ----- Chart() console tables -------------------------------------
+# Ports of the printers behind lessR's Chart() text output, line for
+# line in layout: .ss.factor() (1-D and 2-D counts), .ss.numeric()
+# with by (the stat of y per level), .ss.real() ("Plotted Values",
+# bar only), and the "Summary Table for" crosstab of Chart.R. The
+# width arithmetic follows the R source so the columns line up as
+# R's do. R prints through print.out_all, which ends each line with
+# a space; those trailing spaces are not reproduced.
+
+def _fmtc(k, w=0, j="right"):
+    """R .fmtc(): a string padded to width w."""
+    s = str(k)
+    return s.rjust(w) if j == "right" else s.ljust(w)
+
+
+def _fmti(k, w=0):
+    """R .fmti(): an integer right-justified to width w."""
+    return str(int(k)).rjust(w)
+
+
+def _fmtr(k, d, w=0):
+    """R .fmt(): a real with d decimals right-justified to w."""
+    return f"{k:.{d}f}".rjust(w)
+
+
+def _r_chr(v, d):
+    """R as.character(round(v, d)): no trailing zeros."""
+    return f"{round(float(v), d):.15g}"
+
+
+def _lvl_str(v):
+    """A category name as R's table() names it: a whole-valued
+    float reads 1, not 1.0."""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def _counts_1d(x_ser, x_name, n_miss, x_lbl=None, width=80):
+    """One categorical variable: title, missing count, frequencies
+    and proportions (horizontal, or vertical past width), and the
+    chi-square test of equal probabilities. R analog: the one
+    variable branch of .ss.factor() via print.out_all."""
+    cnt = x_ser.groupby(x_ser, observed=True, sort=True).size()
+    cnt = cnt[cnt > 0]
+    names = [_lvl_str(v) for v in cnt.index]
+    x = cnt.to_numpy()
+    tot = int(x.sum())
+    xp = x / tot
+    w = len(str(tot))
+
+    max_ln = [max(6, max(len(nm), len(str(v))) + 1)
+              for nm, v in zip(names, x)]
+    hdr = " " * 13
+    for nm, ml in zip(names, max_ln):
+        hdr += " " + _fmtc(nm, ml)
+    hdr += " " + _fmtc("Total", w + 6)
+    if len(hdr) <= width:
+        frq = "Frequencies: "
+        prp = "Proportions: "
+        for v, p, ml in zip(x, xp, max_ln):
+            frq += " " + _fmti(v, ml)
+            prp += " " + _fmtr(p, 3, ml)
+        frq += " " + _fmti(tot, w + 6)
+        prp += " " + _fmtc("1.000", w + 6)
+        counts = [hdr, frq, prp]
+    else:                          # vertical display
+        mx_nm = max(max(len(nm) for nm in names), len("Total"))
+        mx_fr = len(str(tot)) + 2
+        xnm = x_name if len(x_name) <= 13 else x_name[:13]
+        dash = "-" * (mx_nm + mx_fr + 9)
+        counts = [_fmtc(xnm, mx_nm) + " " + _fmtc("Count", mx_fr)
+                  + " " + _fmtc("Prop", 6), dash]
+        for nm, v, p in zip(names, x, xp):
+            counts.append(_fmtc(nm, mx_nm) + " " + _fmti(v, mx_fr)
+                          + " " + _fmtr(p, 3, 7))
+        counts += [dash, _fmtc("Total", mx_nm) + " "
+                   + _fmti(tot, mx_fr) + " " + _fmtc("1.000", 7)]
+
+    ttl = x_name if x_lbl is None else f"{x_name}: {x_lbl}"
+    lines = [f"--- {ttl} ---"]
+    if n_miss is not None:
+        lines += ["", f"Missing Values: {n_miss}"]
+    lines += [""] + counts
+    if len(x) > 1:
+        chi, p = sps.chisquare(x)
         lines += ["",
-                  f"chi-square({dof}) = {fmt(chi2, 2)}, "
-                  f"p-value = {fmt(p, 4)}"]
+                  "Chi-squared test of null hypothesis of equal "
+                  "probabilities",
+                  f"  Chisq = {chi:.3f}, df = {len(x) - 1}, "
+                  f"p-value = {p:.3f}"]
+        if (tot / len(x)) < 5:     # expected count is n/k for each
+            lines += [">>> Low cell expected frequencies, so "
+                      "chi-squared approximation may not be accurate",
+                      ""]
     return lines
+
+
+def _prnfreq(tbl, typ, max_ln, max_c1, n_dash, ttl, x_name,
+             y_name, dgt=3):
+    """A titled 2-D table, rows by levels, columns x levels.
+    R analog: .prnfreq() in ss.factor.R, horizontal layout."""
+    tx = [ttl, "-" * n_dash, ""]
+    tx.append(_fmtc(x_name, max_c1 + 3))
+    buf1 = dgt - 3 if typ == "r" else 0
+    line = (y_name or "").ljust(max_c1)
+    for c, ml in zip(tbl.columns, max_ln):
+        line += _fmtc(c, ml + buf1)
+    tx.append(line)
+    for r in tbl.index:
+        line = ("  " + str(r)).ljust(max_c1)
+        for c, ml in zip(tbl.columns, max_ln):
+            v = tbl.loc[r, c]
+            line += (_fmtr(v, dgt, ml + buf1) if typ == "r"
+                     else _fmti(v, ml))
+        tx.append(line)
+    return tx
+
+
+def _counts_2d(x_ser, by_ser, x_name, by_name, stack100=False):
+    """Two categorical variables: joint and marginal frequencies,
+    then Cramer's V and the chi-square test of independence, or
+    with stack100 the proportions within each column the chart is
+    drawn from. R analog: the two variable branch of .ss.factor()
+    and its use in bc.main.R."""
+    ct = pd.crosstab(by_ser, x_ser)
+    ct.index = [_lvl_str(v) for v in ct.index]
+    ct.columns = [_lvl_str(v) for v in ct.columns]
+    xx = ct.copy()
+    xx["Sum"] = xx.sum(axis=1)
+    xx.loc["Sum"] = xx.sum(axis=0)
+
+    max_c1 = max([len(by_name or "")]
+                 + [len(str(r)) for r in xx.index]) + 2
+    max_c1 = max(max_c1, 5)
+    max_ln = [max(4, max(len(str(c)),
+                         max(len(str(int(v))) for v in xx[c])) + 1)
+              for c in xx.columns]
+
+    lines = [""]                   # R's empty title, then a blank
+    lines += _prnfreq(xx, "i", max_ln, max_c1, 30,
+                      "Joint and Marginal Frequencies",
+                      x_name, by_name)
+
+    if stack100:
+        max_ln = [max(6, m) for m in max_ln]
+        col = (ct / ct.sum(axis=0)).round(3)
+        col.loc["Sum"] = col.sum(axis=0).round(3)
+        mx = max(max_ln)
+        buf = mx - 4               # R: digits_d - 3 < max.c1
+        lines += [""] + _prnfreq(
+            col, "r", [m + buf for m in max_ln[:len(col.columns)]],
+            max_c1, 35, "Cell Proportions within Each Column",
+            x_name, by_name)
+        return lines
+
+    obs = ct.to_numpy()
+    chi, p, dof, exp = sps.chi2_contingency(obs, correction=False)
+    lines.append("")
+    if np.isfinite(chi):
+        min_rc = min(obs.shape) - 1
+        V = np.sqrt(chi / (min_rc * obs.sum()))
+        phi = " (phi)" if dof == 1 else ""
+        lines += [f"Cramer's V{phi}: {V:.3f}", "",
+                  "Chi-square Test of Independence:",
+                  f"     Chisq = {chi:.3f}, df = {dof}, "
+                  f"p-value = {p:.3f}"]
+        if (exp < 5).any():
+            lines.append(">>> Low cell expected frequencies, "
+                         "chi-squared approximation may not be "
+                         "accurate")
+    else:
+        lines += ["Cross-tabulation table not well-formed, usually "
+                  "too many zeros",
+                  "Cramer's V and the chi-squared analysis not "
+                  "possible"]
+    return lines
+
+
+def _stat_by_levels(y_ser, x_ser, y_name, x_name, digits_d,
+                    y_lbl=None, x_lbl=None):
+    """n, miss, mean, sd, min, mdn, max of y for each level of x.
+    R analog: .ss.numeric(y, by=x, brief=TRUE) as Chart() calls
+    it, its width arithmetic included."""
+    d = digits_d
+    groups = [(lv, g) for lv, g in
+              y_ser.groupby(x_ser, observed=True, sort=True)]
+    names = [_lvl_str(lv) for lv, _ in groups]
+    vecs = [pd.to_numeric(g, errors="coerce") for _, g in groups]
+    n_lines = len(groups)
+
+    max_char = max(len(nm) for nm in names)
+    max_lv = max_char
+    max_n = max(len(str(int(v.notna().sum()))) for v in vecs)
+    max_nm = max(len(str(int(v.isna().sum()))) for v in vecs)
+    if n_lines == 1:
+        max_lv = max(max_lv, 3)
+
+    max_ln = 0
+    for v in vecs:
+        m, s = v.mean(), v.std(ddof=1)
+        if pd.isna(s):
+            n_ln = len(_r_chr(m, d)) + d
+        else:
+            n_ln = max(len(_r_chr(m, d)), len(_r_chr(s, d))) + d
+        max_ln = max(max_ln, n_ln)
+    if max_ln < 5:
+        max_ln += 1
+    if max_ln < 10:
+        max_ln += 1
+    if max_ln < 4:
+        max_ln += 2
+    if max_ln < 8:
+        max_ln += 1
+    nbuf = 3 if n_lines == 1 else 5
+
+    t1 = y_name if y_lbl is None else f"{y_name}: {y_lbl}"
+    t2 = x_name if x_lbl is None else f"{x_name}: {x_lbl}"
+    lines = [t1, "  - by levels of - ", t2, ""]
+    lines.append(" ".join([
+        _fmtc("n", len(str(max_n)) + nbuf + max_lv - 2),
+        _fmtc("miss", len(str(max_nm)) + 5),
+        _fmtc("mean", max_ln), _fmtc("sd", max_ln),
+        _fmtc("min", max_ln), _fmtc("mdn", max_ln),
+        _fmtc("max", max_ln)]))
+    for nm, v in zip(names, vecs):
+        lvl = _fmtc(nm.ljust(max_char + 1), max_lv)
+        n, miss = int(v.notna().sum()), int(v.isna().sum())
+        row = [lvl, _fmti(n, max_n + 1), _fmti(miss, max_nm + 5)]
+        vv = v.dropna()
+        if n == 1:
+            row.append(_fmtr(vv.mean(), d, max_ln))
+        elif n > 1:
+            row += [_fmtr(s, d, max_ln) for s in
+                    (vv.mean(), vv.std(ddof=1), vv.min(),
+                     vv.median(), vv.max())]
+        lines.append(" ".join(row))
+    return lines
+
+
+def _plotted_values(vals, digits_d):
+    """The aggregated values a bar chart draws. R analog: the one
+    variable branch of .ss.real(), horizontal layout."""
+    names = [_lvl_str(k) for k in vals.index]
+    max_ln = [max(6, max(len(nm), len(_fmtr(v, digits_d))) + 1)
+              for nm, v in zip(names, vals)]
+    hdr = "".join(" " + _fmtc(nm, ml) for nm, ml in zip(names, max_ln))
+    val = "".join(_fmtr(v, digits_d, ml + 1)
+                  for v, ml in zip(vals, max_ln))
+    return [" Plotted Values", " " + "-" * 14, hdr, val]
+
+
+def _r_table_lines(tbl, digits_d):
+    """A numeric 2-D table as R's print() of a table draws it: one
+    shared width, row names left, columns right-justified."""
+    cells = [[_fmtr(v, digits_d) if pd.notna(v) else "NA"
+              for v in tbl.loc[r]] for r in tbl.index]
+    cols = [_lvl_str(c) for c in tbl.columns]
+    w = max([len(c) for c in cols] + [len(s) for row in cells
+                                      for s in row])
+    rows = [_lvl_str(r) for r in tbl.index]
+    rw = max(len(r) for r in rows)
+    lines = [" " * rw + "".join(" " + c.rjust(w) for c in cols)]
+    for r, row in zip(rows, cells):
+        lines.append(r.ljust(rw) + "".join(" " + s.rjust(w)
+                                           for s in row))
+    return lines
+
+
+def _summary_table(x_ser, y_ser, grp_ser, stat, y_name, digits_d,
+                   facet_ser=None, facet_name=None, diff_row=False):
+    """The stat of y in each cell of the grouping by x, headed
+    "Summary Table for". R analog: Chart.R's xtabs() print, with a
+    second grouping printed slice by slice as R prints a 3-D
+    table."""
+    agg = STAT_LBL.get(stat, stat.title())
+    lines = [f"Summary Table for {agg} of {y_name}", ""]
+    fun = STAT_FUN[stat]
+
+    def table(mask):
+        df = pd.DataFrame({"g": grp_ser[mask], "x": x_ser[mask],
+                           "y": pd.to_numeric(y_ser[mask])})
+        return (df.groupby(["g", "x"], observed=True)["y"].agg(fun)
+                .unstack("x"))
+
+    if facet_ser is None:
+        tbl = table(slice(None))
+        if diff_row and len(tbl) == 2:
+            # a paired dot plot is read for the difference between
+            #   the two groups, so list it with them as a third row,
+            #   rounded to the table's own precision
+            rn = [_lvl_str(r) for r in tbl.index]
+            tbl.loc["Diff"] = (tbl.iloc[1] - tbl.iloc[0]).round(digits_d)
+            lines += _r_table_lines(tbl, digits_d)
+            lines += ["", f"Diff: {rn[1]}-{rn[0]}"]
+        else:
+            lines += _r_table_lines(tbl, digits_d)
+    else:
+        for lv in _category_order_sorted(facet_ser):
+            lines += [f", , {facet_name} = {_lvl_str(lv)}", ""]
+            lines += _r_table_lines(table(facet_ser == lv), digits_d)
+            lines.append("")
+    return lines
+
+
+def _category_order_sorted(s):
+    vals = s.dropna().unique()
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        return [c for c in s.cat.categories if c in set(vals)]
+    return sorted(vals)
+
+
+def chart_stats(x_ser, by_ser, y_ser, stat, x_name, by_name, y_name,
+                digits_d=2, stack100=False, n_miss=None, x_lbl=None,
+                y_lbl=None, facet_ser=None, facet_name=None,
+                form="bar"):
+    """The text output that accompanies Chart(), as lessR prints
+    it: counts of one variable with the chi-square test of equal
+    probabilities; the joint and marginal frequencies with Cramer's
+    V and the test of independence (column proportions instead
+    with stack100); the stat of y over the levels of x (plus the
+    plotted values for a bar chart); and the summary table of the
+    stat when a by or facet variable groups the bars. A facet
+    without by takes by's place, as in R."""
+    if y_ser is None:
+        if by_ser is not None and facet_ser is not None:
+            # each panel crosses x with by, so describe each panel:
+            #   one cross-tabulation per facet level
+            lines = []
+            for lv in _category_order_sorted(facet_ser):
+                m = facet_ser == lv
+                lines += ["", f"{facet_name} = {_lvl_str(lv)}"]
+                lines += _counts_2d(x_ser[m], by_ser[m], x_name,
+                                    by_name, stack100)[1:]
+            return lines + [""]
+        grp, grp_name = ((by_ser, by_name) if by_ser is not None
+                         else (facet_ser, facet_name))
+        if grp is None:
+            return _counts_1d(x_ser, x_name, n_miss, x_lbl) + [""]
+        return _counts_2d(x_ser, grp, x_name, grp_name,
+                          stack100) + [""]
+
+    if by_ser is None and facet_ser is None:
+        lines = _stat_by_levels(y_ser, x_ser, y_name, x_name,
+                                digits_d, y_lbl, x_lbl) + [""]
+        if form == "bar":
+            vals = (pd.to_numeric(y_ser).groupby(x_ser, observed=True,
+                                                 sort=True)
+                    .agg(STAT_FUN[stat]))
+            lines += [""] + _plotted_values(vals, digits_d) + [""]
+        return lines
+
+    if by_ser is None:
+        return _summary_table(x_ser, y_ser, facet_ser, stat, y_name,
+                              digits_d) + [""]
+    return _summary_table(x_ser, y_ser, by_ser, stat, y_name,
+                          digits_d, facet_ser, facet_name,
+                          diff_row=(form == "dot")) + [""]
+
+
+def nested_stats(cols, names, y_ser, stat, y_name, digits_d=2):
+    """The joint frequencies (or the stat of y) along every path of
+    a nesting of several categorical variables, the table behind a
+    treemap, icicle, or sunburst with more than one by variable.
+    R prints nothing for three or more dimensions."""
+    df = pd.DataFrame({nm: c.map(_lvl_str) for nm, c in
+                       zip(names, cols)})
+    if y_ser is None:
+        t = df.groupby(names, observed=True, sort=True).size()
+        out = pd.DataFrame({"n": t, "prop": t / t.sum()})
+        body = out.to_string(formatters={
+            "n": "{:d}".format, "prop": "{:.3f}".format})
+        title = "Joint Frequencies of " + ", ".join(names)
+    else:
+        df["..y"] = pd.to_numeric(y_ser).to_numpy()
+        g = df.groupby(names, observed=True, sort=True)["..y"]
+        out = pd.DataFrame({"n": g.size(), stat: STAT_FUN[stat](g)})
+        body = out.to_string(formatters={
+            "n": "{:d}".format,
+            stat: (lambda v: f"{v:.{digits_d}f}")})
+        title = (f"{STAT_LBL.get(stat, stat)} of {y_name} by "
+                 + ", ".join(names))
+    return [title, "-" * len(title), ""] + body.split("\n") + [""]

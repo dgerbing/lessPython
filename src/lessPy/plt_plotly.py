@@ -40,7 +40,8 @@ def plt_plotly(groups, by_name=None,
                pt_size=1,
                x_lab="", y_lab="", ax=None, gridT1=None,
                gridT2=None, main=None, digits_d=2,
-               connect=False, is_date=False, pt_opacity=0.90,
+               connect=False, ln_width=1.5, is_date=False,
+               pt_opacity=0.90,
                area_polys=None,
                fit_lines=None, fit_color=None, fit_lwd=None,
                se_polys=None, se_fill=None,
@@ -85,6 +86,17 @@ def plt_plotly(groups, by_name=None,
     px = float(pt_size) * (6.5 if has_groups else 7.25)
     if not np.isfinite(px) or px < 0:
         px = 5
+    # width of the segments that connect the points, from line_width of
+    #   XY(). A width of 0 draws no segments, as in lessR, where
+    #   .plt.main() tests ln.width > 0
+    try:
+        ln_width = float(ln_width)
+    except (TypeError, ValueError):
+        ln_width = 1.5
+    if not np.isfinite(ln_width) or ln_width < 0:
+        ln_width = 1.5
+    connect = connect and ln_width > 0
+
     mode_pts = "lines+markers" if connect else "markers"
     if connect and px == 0:
         mode_pts = "lines"
@@ -105,7 +117,7 @@ def plt_plotly(groups, by_name=None,
             name=None if nm is None else str(nm),
             legendgroup=None if nm is None else str(nm),
             marker=marker,
-            line=(dict(color=to_hex(borders[i]), width=1.5)
+            line=(dict(color=to_hex(borders[i]), width=ln_width)
                   if connect else None),
             hovertemplate=hover,
             # connected series show a legend-only line sample below
@@ -115,7 +127,7 @@ def plt_plotly(groups, by_name=None,
             fig.add_trace(go.Scatter(
                 x=xv[:2], y=yv[:2], mode="lines",
                 name=str(nm), legendgroup=str(nm),
-                line=dict(color=to_hex(borders[i]), width=1.5),
+                line=dict(color=to_hex(borders[i]), width=ln_width),
                 hoverinfo="skip", showlegend=True,
             ))
 

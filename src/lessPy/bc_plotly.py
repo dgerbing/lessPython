@@ -66,7 +66,7 @@ def _pick(v, name, i):
 
 
 def _bar_labels(vals, share, labels, digits_d, counts=None,
-                labels_decimals=None):
+                labels_decimals=None, labels_cut=None):
     """vals are the plotted bar heights, share the proportion each
     one represents. counts, supplied when the heights are already
     proportions (Chart's stack100), are the frequencies behind them
@@ -78,6 +78,19 @@ def _bar_labels(vals, share, labels, digits_d, counts=None,
     call to bc_plotly() gets; Chart() always resolves a value."""
     if labels == "off":
         return ["" for _ in vals]
+    txt = _bar_label_text(vals, share, labels, digits_d, counts,
+                          labels_decimals)
+    # a label for a share below labels_cut is left off, its segment
+    #   too small to hold it. R analog: bc.main.R labels_cut
+    if labels_cut is not None:
+        txt = ["" if (s is not None and np.isfinite(s)
+                      and s < labels_cut) else t
+               for t, s in zip(txt, share)]
+    return txt
+
+
+def _bar_label_text(vals, share, labels, digits_d, counts,
+                    labels_decimals):
     if labels == "input":
         src = vals if counts is None else counts
         if labels_decimals is not None:
@@ -142,7 +155,7 @@ def bc_plotly(x, x_name=None, y_name=None, by_name=None,
               axis_fmt="K", axis_x_pre="", axis_y_pre="",
               labels=None, labels_size=0.90, labels_color=None,
               labels_position=None, labels_decimals=None,
-              labels_autocontrast=False,
+              labels_autocontrast=False, labels_cut=None,
               legend_title=None, legend_position=None,
               legend_labels=None, legend_horiz=False,
               legend_size=None, legend_abbrev=None,
@@ -257,7 +270,8 @@ def bc_plotly(x, x_name=None, y_name=None, by_name=None,
         border_vec = as_plotly_color(_rep_len(border, len(cats)))
 
         txt = _bar_labels(vals, share, labels, digits_d, counts=cnt,
-                          labels_decimals=labels_decimals)
+                          labels_decimals=labels_decimals,
+                          labels_cut=labels_cut)
         txt_col = text_colors(fill_vec, len(cats))
 
         plt = go.Figure(go.Bar(
@@ -345,7 +359,8 @@ def bc_plotly(x, x_name=None, y_name=None, by_name=None,
                 share_within_x[i] if prop_scaled else share_total[i],
                 labels, digits_d,
                 counts=None if cnt is None else cnt[i],
-                labels_decimals=labels_decimals)
+                labels_decimals=labels_decimals,
+                labels_cut=labels_cut)
             txt_col = text_colors(fill_i, len(row))
 
             plt.add_trace(go.Bar(
@@ -490,15 +505,21 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
                     proportion=False, digits_d=0, main=None,
                     n_col=1, axis_fmt="K", axis_x_pre="",
                     rotate_x=0, rotate_y=0,
+                    by_tbls=None, by_name=None, beside=False,
+                    val_name=None, legend_title=None,
                     style_opts=None):
-    """Faceted bar chart of counts: one panel per facet level,
-    stacked on a shared count axis with horizontal bars, as in the
-    lattice Trellis bar chart (barchart(x ~ Count | facet)) that
-    R renders for Chart(x, facet=). Input: DataFrame with rows =
-    facet levels, columns = x categories, values = counts.
-    n_col > 1 lays the panels out as a grid (the lattice n_col),
-    filled bottom-up as in finish_facet.
-    R analog: .bar.lattice T.type="bar" (plotly-only port)"""
+    """Faceted bar chart: one panel per facet level, on a shared
+    value axis with horizontal bars, as in the lattice Trellis bar
+    chart (barchart(x ~ Count | facet)) that R renders for
+    Chart(x, facet=). Input: DataFrame with rows = facet levels,
+    columns = x categories, values = counts or, with val_name, the
+    aggregated statistic. by_tbls: {facet level: DataFrame with
+    rows = by levels, columns = x categories}, the levels of by
+    dividing each bar (stacked, or side by side with beside), one
+    legend for all panels. The value axis always includes zero, as
+    the length of a bar is read from it. n_col > 1 lays the panels
+    out as a grid (the lattice n_col), filled top-down in reading
+    order. R analog: .bar.lattice T.type="bar" (plotly-only port)"""
 
     if not isinstance(x, pd.DataFrame):
         raise TypeError("x must be a pandas DataFrame with rows = "
@@ -516,48 +537,91 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
     cats = [str(c) for c in x.columns]
     mat = x.to_numpy(dtype=float)
     n_f = len(fac_levels)
+    grouped = by_tbls is not None
 
     if proportion:                # per-panel, ~ prop.table margin
         row_tot = mat.sum(axis=1, keepdims=True)
         mat = np.divide(mat, row_tot, out=np.zeros_like(mat),
                         where=row_tot > 0)
-    val_name = "Proportion" if proportion else "Count"
+    if val_name is None:
+        val_name = "Proportion" if proportion else "Count"
     if x_lab is None:
-        x_lab = f"{val_name} of {x_name}"
+        x_lab = (val_name if " of " in val_name or grouped
+                 else f"{val_name} of {x_name}")
     if y_lab is None:
         y_lab = x_name
 
     alpha_fill = 0.92 if opacity is None else float(opacity)
-    fill_vec = as_plotly_color(_rep_len(fill, len(cats)))
-    border_vec = as_plotly_color(_rep_len(border, len(cats)))
 
-    axT1 = pretty(0.0, float(np.nanmax(mat)) if mat.size else 1.0)
+    # the scale includes zero; a stacked bar reaches the total of
+    #   its segments, so the scale is taken from those totals
+    if grouped:
+        by_levels = [str(b) for b in
+                     next(iter(by_tbls.values())).index]
+        ends = []
+        for t in by_tbls.values():
+            v = t.to_numpy(dtype=float)
+            ends += (list(np.nansum(v, axis=0)) if not beside
+                     else list(v.ravel()))
+    else:
+        ends = list(mat.ravel())
+    ends = [e for e in ends if np.isfinite(e)] or [1.0]
+    axT1 = pretty(min(0.0, min(ends)), max(0.0, max(ends)))
     ax = {"axT1": axT1,
           "axL1": axis_format(axT1, digits_d, axis_fmt,
                               axis_x_pre)}
+    v_fmt = (f".{max(2, digits_d)}f" if (proportion or digits_d)
+             else "g")
 
     n_col = max(1, min(int(n_col or 1), n_f))
     fig = facet_fig(math.ceil(n_f / n_col), n_col)
     for i, lv in enumerate(fac_levels):
-        row = mat[i]
-        hover = [
-            (f"{x_name}: {c}"
-             f"<br>{val_name}: "
-             + (f"{v:.{max(2, digits_d)}f}" if proportion
-                else f"{v:g}")
-             + f"<br>{facet_name}: {lv}")
-            for c, v in zip(cats, row)]
-        r, c = facet_pos(i, n_f, n_col)   # first level bottom-left
-        fig.add_trace(go.Bar(
-            x=row, y=cats, orientation="h",
-            marker=dict(color=fill_vec, opacity=alpha_fill,
-                        line=dict(color=border_vec, width=1)),
-            hoverinfo="text", hovertext=hover,
-            showlegend=False,
-        ), row=r, col=c)
+        r, c = facet_pos(i, n_f, n_col)   # first level top-left
+        if not grouped:
+            row = mat[i]
+            fill_vec = as_plotly_color(_rep_len(fill, len(cats)))
+            border_vec = as_plotly_color(_rep_len(border, len(cats)))
+            hover = [
+                (f"{x_name}: {cc}<br>{val_name}: {v:{v_fmt}}"
+                 f"<br>{facet_name}: {lv}")
+                for cc, v in zip(cats, row)]
+            fig.add_trace(go.Bar(
+                x=row, y=cats, orientation="h",
+                marker=dict(color=fill_vec, opacity=alpha_fill,
+                            line=dict(color=border_vec, width=1)),
+                hoverinfo="text", hovertext=hover,
+                showlegend=False,
+            ), row=r, col=c)
+            continue
+        t = by_tbls[x.index[i]]
+        for j, b in enumerate(by_levels):
+            vals = t.iloc[j].to_numpy(dtype=float)
+            clr = as_plotly_color(_rep_len(fill, len(by_levels))[j])
+            brd = as_plotly_color(_rep_len(border, len(by_levels))[j])
+            hover = [
+                (f"{x_name}: {cc}<br>{by_name}: {b}"
+                 f"<br>{val_name}: {v:{v_fmt}}"
+                 f"<br>{facet_name}: {lv}")
+                for cc, v in zip(cats, vals)]
+            fig.add_trace(go.Bar(
+                x=vals, y=cats, orientation="h", name=b,
+                legendgroup=b, showlegend=(i == 0),
+                marker=dict(color=clr, opacity=alpha_fill,
+                            line=dict(color=brd, width=1)),
+                hoverinfo="text", hovertext=hover,
+            ), row=r, col=c)
 
     finish_facet(fig, fac_levels, ax, x_lab, y_lab, gridT1=axT1,
                  style_opts=style_opts, y_cat=cats, n_col=n_col)
+    if grouped:
+        fig.update_layout(
+            barmode="group" if beside else "stack",
+            showlegend=True,
+            legend=dict(title=dict(text=(legend_title
+                                         if legend_title is not None
+                                         else by_name)),
+                        traceorder="normal"))
+    fig.update_xaxes(range=[axT1[0], axT1[-1]])   # includes zero
     if rotate_x:
         fig.update_xaxes(tickangle=-rotate_x)
     if rotate_y:

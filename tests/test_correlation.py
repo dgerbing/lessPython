@@ -61,3 +61,20 @@ def test_errors(d):
         Correlation(d[["Years", "Salary"]], miss="x")
     with pytest.raises(ValueError, match="method:"):
         Correlation("Years", "Salary", data=d, method="x")
+
+
+def test_filter(d):
+    # row subsetting, as in ttest(), ANOVA() and Regression()
+    all_rows = Correlation("Years", "Salary", data=d)
+    men = Correlation("Years", "Salary", data=d,
+                      filter='Gender == "M"')
+    assert men.n < all_rows.n
+    assert men.r != all_rows.r
+
+    # a DataFrame passed as x is filtered too
+    m = Correlation(d[["Years", "Salary"]], filter="Years > 5")
+    assert m.shape == (2, 2)
+
+    # with neither, there is nothing to filter
+    with pytest.raises(ValueError, match="filter needs"):
+        Correlation("Years", "Salary", filter='Gender == "M"')

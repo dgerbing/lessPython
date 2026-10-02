@@ -45,8 +45,12 @@ def test_table_one_and_two(d):
     assert t1.set_index("Dept").loc["SALE", "n"] == 15
     assert t1.set_index("Dept").loc["SALE", "Prop"] == 0.41
     t2 = pivot(d, "table", by=["Dept", "Gender"])
-    assert list(t2.columns) == ["Gender", "Dept", "n"]
+    # the by variables keep the order given, with the first varying
+    #   fastest, matching lessR from 2026-08 on
+    assert list(t2.columns) == ["Dept", "Gender", "n"]
     assert len(t2) == 12
+    assert list(t2["Gender"])[:5] == ["M"] * 5        # second is slowest
+    assert list(t2["Dept"])[:4] == ["ACCT", "ADMN", "FINC", "MKTG"]
 
 
 def test_errors(d):

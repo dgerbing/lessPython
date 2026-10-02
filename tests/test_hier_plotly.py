@@ -79,3 +79,40 @@ def test_hier_deviation_rejected(d):
     with pytest.raises(ValueError, match="deviation"):
         Chart("Dept", y="Salary", stat="deviation", data=d,
               form="treemap")
+
+
+def test_hier_fill_sequential_palette():
+    # a palette name selects the palette and each shade is read off
+    # its ramp by magnitude (R pal_explicit); hex values are R's
+    # Chart(..., form="treemap", fill="greens") on Employee
+    from lessPy import read_data
+    emp = read_data("Employee")
+    tr = Chart("Dept", data=emp, form="treemap", fill="greens",
+               quiet=True).data[0]
+    assert dict(zip(tr.labels, tr.marker.colors)) == {
+        "ACCT": "#B8DFAC", "ADMN": "#A2CC95", "FINC": "#CFF2C4",
+        "MKTG": "#A2CC95", "SALE": "#003200"}
+    tr = Chart("Dept", y="Salary", stat="mean", data=emp,
+               form="icicle", fill="greens", quiet=True).data[0]
+    assert dict(zip(tr.labels, tr.marker.colors)) == {
+        "ACCT": "#CFF2C4", "ADMN": "#003200", "FINC": "#74A662",
+        "MKTG": "#649950", "SALE": "#004700"}
+
+
+def test_hier_nested_by_list(capsys):
+    # each further by variable nests one level deeper; node table
+    # identical to R's Chart(Dept, by=c(Gender, Plan), "treemap")
+    from lessPy import read_data
+    emp = read_data("Employee")
+    tr = Chart("Dept", by=["Gender", "Plan"], data=emp,
+               form="treemap").data[0]
+    assert len(tr.ids) == 33 and sum(tr.values) == 36
+    assert "I_SALE_M_1" in tr.ids
+    i = list(tr.ids).index("I_SALE_M_1")
+    assert tr.parents[i] == "I_SALE_M" and tr.values[i] == 6
+    out = capsys.readouterr().out
+    assert "Joint Frequencies of Dept, Gender, Plan" in out
+    # pie with a list of by is a sunburst of the same nesting
+    tr = Chart("Dept", by=["Gender", "Plan"], data=emp, form="pie",
+               quiet=True).data[0]
+    assert tr.type == "sunburst" and len(tr.ids) == 33

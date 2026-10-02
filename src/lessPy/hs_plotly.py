@@ -12,7 +12,7 @@
 #
 # facet= draws one panel per level on shared bins and a shared
 # count scale (~ .bar.lattice T.type="hist"), first level in the
-# bottom panel; proportions are per panel. With by=, each panel
+# top panel; proportions are per panel. With by=, each panel
 # overlays (or stacks) one translucent series per group, and
 # proportions and hover shares are per group within a panel.
 
@@ -263,7 +263,7 @@ def _hs_facet(x, facet, facet_order, x_name, facet_name, breaks,
     """One histogram panel per facet level: shared bins, shared
     count scale, per-panel proportions. ~ .bar.lattice hist.
     With by=, one translucent series per group within each panel,
-    overlaid (default) or stacked, legend from the bottom panel;
+    overlaid (default) or stacked, legend from the first panel;
     proportions are then per group within a panel. facet2: the
     two-facet grid, rows = facet2 levels."""
     x = np.asarray(x, dtype=float)
@@ -373,7 +373,7 @@ def _hs_facet(x, facet, facet_order, x_name, facet_name, breaks,
                             line=dict(color=borders[g], width=1)),
                 hoverinfo="text", hovertext=hover,
                 showlegend=G > 1 and i == 0,
-            ), row=p_row, col=p_col)  # first level bottom
+            ), row=p_row, col=p_col)  # first level top-left
 
     fig.update_layout(bargap=0,
                       barmode="stack" if stack else "overlay")

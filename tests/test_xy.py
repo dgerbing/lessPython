@@ -44,8 +44,14 @@ def test_y_required(d):
 
 
 def test_categorical_rejected(d):
-    with pytest.raises(TypeError, match="Chart\\(\\)"):
+    # lessR (Aug 2026): XY() takes continuous x and y only, and
+    # names the view a categorical variable belongs to
+    with pytest.raises(TypeError, match=r"X\('Years', by='Gender'\)"):
         XY("Years", "Gender", data=d)
+    with pytest.raises(TypeError, match="form='bubble'"):
+        XY("Dept", "Gender", data=d)
+    with pytest.raises(TypeError, match="facet='Dept'"):
+        XY("Gender", "Salary", facet="Dept", data=d)
 
 
 def test_filter(d):
@@ -717,9 +723,9 @@ def test_ts_facet_panels(dtsf):
     assert all(len(t.x) == 12 for t in lines)
     strips = [a.text for a in fig.layout.annotations]
     assert "East" in strips and "West" in strips
-    # first level (East) on the bottom panel (row 2 -> y2)
-    bottom = [t for t in lines if t.yaxis == "y2"][0]
-    assert bottom.y[0] == pytest.approx(10)
+    # first level (East) on the top panel (row 1 -> y)
+    top = [t for t in lines if t.yaxis == "y"][0]
+    assert top.y[0] == pytest.approx(10)
 
 
 def test_ts_facet_sorted(dtsf):
@@ -1024,23 +1030,6 @@ def test_font_size_scales_text(d):
     assert sx.title.font.size == bx.title.font.size
 
 
-def test_stat_cleveland_dot(d):
-    # XY with stat= aggregates a numeric by a categorical -> a
-    # Cleveland dot plot (delegates to Chart form="dot")
-    fig = XY("Dept", "Salary", stat="mean", data=d)
-    marks = [t for t in fig.data if t.mode and "markers" in t.mode]
-    assert marks
-    assert set(marks[0].x) == set(d["Dept"].unique())
-
-
-def test_stat_sort_orders_by_value(d):
-    fig = XY("Dept", "Salary", stat="mean", sort="+", data=d)
-    marks = [t for t in fig.data if t.mode and "markers" in t.mode]
-    cats = list(marks[0].x)
-    means = d.groupby("Dept")["Salary"].mean()
-    assert cats == list(means.sort_values().index)
-
-
 def test_stat_needs_one_categorical(d):
     with pytest.raises(ValueError, match="stat="):
         XY("Years", "Salary", stat="mean", data=d)
@@ -1076,18 +1065,58 @@ def test_fit_new_predictions(d, capsys):
         or out.index("  1 ") < out.index(" 20 ")
 
 
-def test_row_names_dot_plot(d):
-    # row_names -> the index as a Cleveland dot plot (via Chart dot)
-    fig = XY("Salary", "row_names", data=d)
-    marks = [t for t in fig.data if t.mode and "markers" in t.mode]
-    assert marks
+def test_line_width(d):
+    # line_width sets the width of the connecting segments, and a width
+    #   of 0 removes them, as in lessR where .plt.main() tests ln.width > 0
+    def seg_widths(**kw):
+        fig = XY(".Index", "Salary", show_runs=True, data=d, **kw)
+        return sorted({t.line.width for t in fig.data
+                       if t.mode and "lines" in t.mode
+                       and t.line.width is not None})
+
+    assert seg_widths() == [1.5]                 # default
+    assert seg_widths(line_width=4) == [4.0]     # honored
+    assert seg_widths(line_width=0) == []        # no segments drawn
+
+    # with the segments off, the points remain
+    fig = XY(".Index", "Salary", show_runs=True, data=d, line_width=0)
+    assert all("lines" not in t.mode for t in fig.data if t.mode)
+    assert any("markers" in t.mode for t in fig.data if t.mode)
+
+    # an unusable value falls back to the default rather than failing
+    for bad in ("x", -2, float("nan"), None):
+        assert seg_widths(line_width=bad) == [1.5]
+
+
+def test_fit_errors_renamed_from_plot_errors(d):
+    # lessR renamed plot_errors to fit_errors (2026-08-24): the segments
+    #   join each point to the fitted line, so they belong to that fit
+    fig = XY("Years", "Salary", data=d, fit="lm", fit_errors=True)
+    plain = XY("Years", "Salary", data=d, fit="lm")
+    lines = lambda f: len([t for t in f.data if t.mode == "lines"])
+    assert lines(fig) > lines(plain)        # residual segments drawn
+
+    # the former name halts and names its replacement
+    with pytest.raises(ValueError, match="renamed to fit_errors"):
+        XY("Years", "Salary", data=d, fit="lm", plot_errors=True)
+
+    # fit_errors needs a fit to draw errors to
+    with pytest.raises(ValueError, match="fit_errors"):
+        XY("Years", "Salary", data=d, fit_errors=True)
+
+
+def test_stat_and_row_names_point_to_chart(d):
+    # the dot plot of a categorical variable is Chart()'s; XY()
+    # names the call instead of drawing it
+    with pytest.raises(ValueError,
+                       match=r"Chart\('Dept', y='Salary', stat='mean'\)"):
+        XY("Dept", "Salary", stat="mean", data=d)
+    with pytest.raises(TypeError, match="form='dot'"):
+        XY("row_names", "Salary", data=d)
+    with pytest.raises(ValueError, match="Chart"):
+        XY("Years", "Salary", sort="-", data=d)
+    from lessPy import Chart
+    fig = Chart("row_names", y="Salary", form="dot", data=d,
+                quiet=True)
+    marks = [t for t in fig.data if t.mode == "markers"]
     assert len(marks[0].y) == len(d)           # one point per row
-    # segments_y=False removes the lollipop stems (axis-name swap)
-    stems = lambda **k: len([t for t in XY("Salary", "row_names",
-                             data=d, **k).data if t.mode == "lines"])
-    assert stems() >= 1
-    assert stems(segments_y=False) == 0
-    # a categorical partner is rejected
-    import pytest
-    with pytest.raises(ValueError, match="numerical"):
-        XY("Gender", "row_names", data=d)

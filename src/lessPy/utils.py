@@ -217,19 +217,59 @@ def band_width(x, bw_iter=10, n=512):
 
 
 def pretty(lo, hi, n=5):
-    """Nice tick values covering [lo, hi]. R analog: pretty()"""
-    if hi <= lo:
-        hi = lo + 1
-    raw = (hi - lo) / n
-    mag = 10 ** math.floor(math.log10(raw))
-    step = 10 * mag
-    for m in (1, 2, 5, 10):
-        if raw <= m * mag * (1 + 1e-10):
-            step = m * mag
-            break
-    start = math.floor(lo / step + 1e-10) * step
-    end = math.ceil(hi / step - 1e-10) * step
-    k = round((end - start) / step)
-    vals = [start + i * step for i in range(k + 1)]
+    """Nice tick values covering [lo, hi], as R's pretty() chooses
+    them: R_pretty() of src/appl/pretty.c with R's defaults
+    (min.n = n %/% 3, high.u.bias = 1.5, u5.bias = 0.5 + 1.5 *
+    high.u.bias, eps.correct = 0). The unit is 1, 2, 5 or 10 times
+    a power of ten, biased toward the larger unit, so 0..132563
+    takes steps of 20000 as in R. R analog: pretty()"""
+    min_n = n // 3
+    h = 1.5
+    h5 = 0.5 + 1.5 * h
+    eps = 2.220446049250313e-16
+    dx = hi - lo
+    if dx == 0 and hi == 0:
+        cell, i_small = 1.0, True
+    else:
+        cell = max(abs(lo), abs(hi))
+        U = 1 + (1 / (1 + h) if h5 >= 1.5 * h + 0.5
+                 else 1.5 / (1 + h5))
+        U *= max(1, n) * eps
+        i_small = dx < cell * U * 3
+    if i_small:                     # a range too small to divide
+        if cell > 10:
+            cell = 9 + cell / 10
+        cell *= 0.75
+        if min_n > 1:
+            cell /= min_n
+    else:
+        cell = dx
+        if n > 1:
+            cell /= n
+    cell = max(cell, 20 * 2.2250738585072014e-308 * 2.0 ** -20)
+    base = 10.0 ** math.floor(math.log10(cell))
+    unit = base
+    if 2 * base - cell < h * (cell - unit):
+        unit = 2 * base
+        if 5 * base - cell < h5 * (cell - unit):
+            unit = 5 * base
+            if 10 * base - cell < h * (cell - unit):
+                unit = 10 * base
+    ns = math.floor(lo / unit + 1e-7)
+    nu = math.ceil(hi / unit - 1e-7)
+    while ns * unit > lo + 1e-10 * unit:
+        ns -= 1
+    while nu * unit < hi - 1e-10 * unit:
+        nu += 1
+    k = int(0.5 + nu - ns)
+    if k < min_n:                   # widen to at least min_n units
+        k = min_n - k
+        if ns >= 0:
+            nu += k // 2
+            ns -= k // 2 + k % 2
+        else:
+            ns -= k // 2
+            nu += k // 2 + k % 2
+    vals = [(ns + i) * unit for i in range(int(nu - ns) + 1)]
     # avoid -0.0 and float dust such as 0.30000000000000004
     return [round(v, 10) + 0.0 for v in vals]

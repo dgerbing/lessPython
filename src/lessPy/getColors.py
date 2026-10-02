@@ -38,7 +38,8 @@ _SEQ_HUE = {
 }
 _SEQ_NAMES = list(_SEQ_HUE)
 _VIRIDIS = {"viridis": "Viridis", "cividis": "Cividis",
-            "plasma": "Plasma", "spectral": "Spectral"}
+            "plasma": "Plasma", "inferno": "Inferno",
+            "spectral": "Spectral"}
 
 # D65 white point (grDevices HCL / colorspace polarLUV)
 _XN, _YN, _ZN = 95.047, 100.0, 108.883
@@ -263,6 +264,10 @@ def getColors(pal=None, end_pal=None, n=None, h=0, h2=None, c=None,
         in_order = False
     if isinstance(pal, str):
         pal = [pal]
+    # a single ending name, getColors("browns", "blues"), is the
+    #   usual divergent call; indexing the bare string read "b"
+    if isinstance(end_pal, str):
+        end_pal = [end_pal]
     if isinstance(pal, list) and pal and pal[0] == "yellows":
         pal[0] = "browns"
     if isinstance(pal, str) and pal == "magma":

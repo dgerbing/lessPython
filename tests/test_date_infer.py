@@ -76,5 +76,5 @@ def test_xy_nondate_string_unaffected():
                       "Pop": [9.0, 3.6, 3.2]})
     # a categorical x with numeric y is not a date -> XY's normal
     # redirect, not a datetime parse
-    with pytest.raises(TypeError, match="numerical"):
+    with pytest.raises(TypeError, match="continuous"):
         XY("City", "Pop", data=d)

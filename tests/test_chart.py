@@ -194,11 +194,13 @@ def test_facet_dot_stat_sort(dfac):
                 data=dfac, form="dot", sort="-")
     # marker traces hold the panel values (lines traces are the
     # dropped segments); values descend within each panel
+    # horizontal by default, so descending reads top-down: the
+    # values ascend from the bottom of each panel
     marks = [tr for tr in fig.data if tr.mode == "markers"]
     assert len(marks) == 2
     for tr in marks:
-        ys = list(tr.y)
-        assert ys == sorted(ys, reverse=True)
+        xs = list(tr.x)
+        assert xs == sorted(xs)
 
 
 def test_facet_hier(dfac):
@@ -219,14 +221,41 @@ def test_facet_pie_grid(dfac):
     assert all(tr.type == "pie" for tr in fig.data)
 
 
+def test_facet_bar_stat_and_by(dfac):
+    # lessR (Aug 2026): the faceted bar chart plots the stat of y
+    # within each panel, from a zero origin, and with by divides
+    # each bar into its levels within every panel, one legend
+    fig = Chart("Dept", y="Salary", stat="mean", facet="Gender",
+                data=dfac, quiet=True)
+    want = dfac.groupby(["Gender", "Dept"])["Salary"].mean()
+    top = fig.data[0]                       # first level, top panel
+    lv0 = sorted(dfac["Gender"].unique())[0]
+    assert list(top.x) == pytest.approx(want[lv0].tolist())
+    assert fig.layout.xaxis.range[0] == 0
+    fig = Chart("Dept", by="Site", facet="Gender", data=dfac,
+                quiet=True)
+    assert fig.layout.barmode == "stack"
+    n_site = dfac["Site"].nunique()
+    assert sum(t.showlegend for t in fig.data) == n_site
+    fig = Chart("Dept", by="Site", facet="Gender", data=dfac,
+                stack100=True, quiet=True)
+    tot = np.sum([list(t.x) for t in fig.data
+                  if t.xaxis == "x"], axis=0)
+    assert tot == pytest.approx(1.0)
+
+
+def test_facet_bar_by_console(dfac, capsys):
+    Chart("Dept", by="Site", facet="Gender", data=dfac)
+    out = capsys.readouterr().out
+    for lv in dfac["Gender"].unique():
+        assert f"Gender = {lv}" in out
+    assert out.count("Joint and Marginal Frequencies") == \
+        dfac["Gender"].nunique()
+
+
 def test_facet_errors(dfac):
     with pytest.raises(ValueError, match="Sort"):
         Chart("Dept", facet="Gender", data=dfac, sort="-")
-    with pytest.raises(ValueError, match="Trellis"):
-        Chart("Dept", y="Salary", stat="mean", facet="Gender",
-              data=dfac)
-    with pytest.raises(ValueError, match="facet"):
-        Chart("Dept", by="Site", facet="Gender", data=dfac)
     with pytest.raises(ValueError, match="single"):
         Chart("Dept", by="Gender", facet="Site", data=dfac,
               form="bubble")
@@ -312,10 +341,10 @@ def test_labels_position_out_stacked_rejected(d):
 def test_facet_proportion_dot(dfac):
     fig = Chart("Dept", facet="Gender", data=dfac, form="dot",
                 stat_x="proportion", quiet=True)
-    assert fig.layout.yaxis.title.text == "Proportion of Dept"
+    assert fig.layout.xaxis.title.text == "Proportion of Dept"
     for tr in fig.data:
         if tr.mode == "markers":
-            vals = [v for v in tr.y if v is not None]
+            vals = [v for v in tr.x if v is not None]
             assert sum(vals) == pytest.approx(1.0)
 
 
@@ -465,8 +494,44 @@ def test_stack100_labels_show_counts(d):
     cnt = pd.crosstab(d["Gender"], d["Dept"])
     for t in fig.data:
         assert list(t.text) == [str(v) for v in cnt.loc[t.name]]
-    assert (fig.layout.yaxis.title.text
-            == "Cell % within Dept by Gender")
+    assert fig.layout.yaxis.title.text == "Proportion within Dept"
+
+
+def test_stack100_console_column_props_no_chisq(d, capsys):
+    # R: the chi-square reads counts, the chart divides each bar by
+    # its own total, so stack100 prints column proportions instead
+    Chart("Dept", by="Gender", stack100=True, data=d)
+    out = capsys.readouterr().out
+    assert "Cell Proportions within Each Column" in out
+    assert "Chi-square" not in out
+    assert "Cramer" not in out
+    Chart("Dept", by="Gender", data=d)
+    assert "Chi-square Test" in capsys.readouterr().out
+
+
+def test_beside_stat_labels_are_values(d):
+    # a percentage of a sum of means is not a quantity
+    fig = Chart("Dept", y="Salary", stat="mean", by="Gender",
+                beside=True, data=d, quiet=True)
+    means = d.groupby(["Gender", "Dept"])["Salary"].mean()
+    for t in fig.data:
+        assert not any(v.endswith("%") for v in t.text)
+        assert [float(v) for v in t.text] == pytest.approx(
+            [means[(t.name, c)] for c in t.x], abs=0.01)
+
+
+def test_numeric_x_many_values_advisory(capsys):
+    df = pd.DataFrame({"Years": list(range(20)) * 2})
+    Chart("Years", data=df, quiet=True)
+    assert 'X("Years")' in capsys.readouterr().out
+    Chart("Years", data=df.iloc[:24].assign(Years=lambda z: z.Years % 10),
+          quiet=True)
+    assert "X(" not in capsys.readouterr().out
+
+
+def test_by_list_refused_names_facet(d):
+    with pytest.raises(ValueError, match="use\n  facet"):
+        Chart("Dept", by=["Gender", "Dept"], data=d)
 
 
 def test_stack100_percent_labels_are_within_x(d):
@@ -728,3 +793,34 @@ def test_facet_titles_use_across_for_every_form(dfac):
     both = Chart("Dept", by="Gender", facet="Site", form="radar",
                  data=dfac).layout.title.text
     assert both == "Count of Dept by Gender across Site"
+
+
+# ----- labels_cut, segments, sub (Oct 2026) ----------------------
+
+def test_labels_cut_only_when_given():
+    df = pd.DataFrame({"x": ["a"] * 30 + ["b"] * 1 + ["c"] * 9})
+    fig = Chart("x", data=df, labels="%", quiet=True)
+    assert all(t for t in fig.data[0].text)      # default: no cut
+    fig = Chart("x", data=df, labels="%", labels_cut=0.05,
+                quiet=True)
+    txt = dict(zip(fig.data[0].x, fig.data[0].text))
+    assert txt["b"] == "" and txt["a"] == "75%"  # 1/40 < 0.05
+    with pytest.raises(ValueError, match="bar"):
+        Chart("x", data=df, form="pie", labels_cut=0.05)
+
+
+def test_segments_profile_switch(d):
+    fig = Chart("Dept", form="profile", data=d, segments=False,
+                quiet=True)
+    assert fig.data[0].mode == "markers"
+    with pytest.raises(ValueError, match="segments_x"):
+        Chart("Dept", form="dot", data=d, segments=False)
+
+
+def test_sub_subtitle(d):
+    from lessPy import X
+    fig = Chart("Dept", data=d, main="Depts", sub="note", quiet=True)
+    assert fig.layout.title.text == "Depts"
+    assert fig.layout.title.subtitle.text == "note"
+    fig = X("Salary", data=d, sub="alone", quiet=True)
+    assert fig.layout.title.text == "alone"

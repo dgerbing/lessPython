@@ -119,12 +119,12 @@ def test_facet_histogram(d):
     # shared bins: same mids in both panels
     assert list(bars[0].x) == list(bars[1].x)
     # per-panel counts sum to the panel n; first level (ACCT)
-    # draws in the BOTTOM panel, which is the last subplot row
+    # draws in the TOP panel, reading order as lessR now fills
     n_acct = (d["Dept"] == "ACCT").sum()
-    bottom = [t for t in bars if t.yaxis == "y2"][0]
-    assert sum(bottom.y) == n_acct
+    top = [t for t in bars if t.yaxis == "y"][0]
+    assert sum(top.y) == n_acct
     assert sum(sum(t.y) for t in bars) == len(d)
-    # strip labels bottom-up
+    # strip labels top-down
     labels = [a.text for a in fig.layout.annotations]
     assert "ACCT" in labels and "MKTG" in labels
     # both panels share the count scale
@@ -329,11 +329,10 @@ def test_facet_grid_2col(d4):
             filter="Site != 'E'", n_col=2)
     bars = [t for t in fig.data if t.type == "bar"]
     assert len(bars) == 4
-    # 2x2 grid: bottom row = subplots 3 and 4 (x3, x4);
-    # first level (A) bottom-left
+    # 2x2 grid in reading order: first level (A) top-left, x
     axes = sorted(t.xaxis for t in bars)
     assert axes == ["x", "x2", "x3", "x4"]
-    a_bar = [t for t in bars if t.xaxis == "x3"][0]
+    a_bar = [t for t in bars if t.xaxis == "x"][0]
     n_a = ((d4["Site"] == "A")).sum()
     assert sum(a_bar.y) == n_a
 
@@ -347,12 +346,14 @@ def test_facet_grid_n_row(d4):
 
 
 def test_facet_grid_ragged(d4):
-    # 5 levels, 2 columns -> 3 rows, empty top-right cell hidden
+    # 5 levels, 2 columns -> 3 rows, empty bottom-right cell hidden
     fig = X("Score", facet="Site", data=d4, n_col=2)
     bars = [t for t in fig.data if t.type == "bar"]
     assert len(bars) == 5
-    assert fig.layout.xaxis2.visible is False
-    assert fig.layout.yaxis2.visible is False
+    assert fig.layout.xaxis6.visible is False
+    assert fig.layout.yaxis6.visible is False
+    # the panel above the empty cell carries the x ticks
+    assert fig.layout.xaxis4.ticks != ""
 
 
 def test_facet_grid_requires_facet(d4):

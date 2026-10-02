@@ -123,7 +123,7 @@ def plt_time(x_ser, y_ser, by_ser, ts_unit, ts_agg, quiet=True):
     gaps = False
     if len(d) > 1:
         dd = pd.DatetimeIndex(d)
-        if ts_unit == "days":
+        if ts_unit in ("days", "days7"):
             gaps = (np.diff(d).astype("timedelta64[D]")
                     .astype(int) > 1).any()
         elif ts_unit == "weeks":

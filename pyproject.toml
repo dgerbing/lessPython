@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lessPython"
-version = "0.1.1"
+version = "0.2.0"
 description = "Python port of R's lessR: analytic-view visualizations, statistical models, and data utilities, rendered with plotly"
 authors = [{ name = "David W. Gerbing", email = "gerbing@pdx.edu" }]
 readme = "README.md"
@@ -47,7 +47,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "kaleido"]
+# static image export (fig.write_image / to_image) needs the Kaleido
+#   renderer. plotly owns the version coupling through its own extra,
+#   so defer to it rather than pin kaleido here. The kaleido extra
+#   first appeared in plotly 6.1, but pinned a release candidate;
+#   6.2 is the first to require a stable kaleido>=1.0.0.
+png = ["plotly[kaleido]>=6.2"]
+dev = ["pytest", "plotly[kaleido]>=6.2"]
 
 [project.urls]
 Homepage = "https://github.com/dgerbing/lessPython"

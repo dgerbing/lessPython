@@ -10,7 +10,7 @@
 # the same geometry as R's density(cut = 3).
 #
 # facet= draws one panel per level: shared bandwidth, support, and
-# density scale, mean line per panel, first level in the bottom
+# density scale, mean line per panel, first level in the top
 # panel. An EXTENSION beyond R, where X() still stops with
 # "Facets not yet working with density" (X.R line ~220). With
 # by=, each panel overlays one curve per group present in it.

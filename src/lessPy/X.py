@@ -35,7 +35,7 @@
 # violin bandwidth search (now the default bandwidth, as R),
 # out_cut/ID/ID_size outlier labels above the strip.
 # n_row/n_col lay the histogram/density/freq_poly facets out
-# as a grid (lattice bottom-up fill); not for the VBS bands.
+# as a grid (reading-order fill, top-left first); not for the VBS bands.
 # Not ported: aspect= (panel aspect is figure sizing in
 # plotly), the axis-format/margin family, add= annotations,
 # themes.

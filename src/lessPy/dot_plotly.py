@@ -7,9 +7,11 @@
 #                  series per column, horizontal, with a legend
 #                  (e.g., x=Name, y=[Pre, Post])
 #   faceted        cats + vals + facet= (one level per
-#                  observation): a grid of single-series panels,
-#                  one per facet level, on a shared value axis
-#                  with dot hues keyed by category name
+#                  observation): a grid of panels, one per facet
+#                  level, on a shared value axis. vals a list:
+#                  single series, dot hues keyed by category
+#                  name; vals a DataFrame: one series per column
+#                  (the levels of by) in every panel, one legend
 
 import numpy as np
 import pandas as pd
@@ -58,7 +60,7 @@ def _marker_list(ms, n, color_override=None):
 
 def _add_marker_trace(fig, cats, vals, marker, orientation,
                       hover_tmpl=None, name=None, showlegend=False,
-                      axis_suf=""):
+                      axis_suf="", legendgroup=None):
     """R analog: .dot_marker_trace()"""
     xv, yv = (cats, vals) if orientation == "v" else (vals, cats)
     kw = dict(mode="markers", x=xv, y=yv, marker=marker,
@@ -68,6 +70,8 @@ def _add_marker_trace(fig, cats, vals, marker, orientation,
         kw["hovertemplate"] = hover_tmpl
     if name is not None:
         kw["name"] = name
+    if legendgroup is not None:
+        kw["legendgroup"] = legendgroup
     fig.add_trace(go.Scatter(**kw))
 
 
@@ -94,11 +98,16 @@ def _add_segment_trace(fig, cats, vals, seg_color, orientation,
     ))
 
 
-def _val_axis(label, gridT, origin_x, ticktext=None):
+def _val_axis(label, gridT, origin_x, ticktext=None, val_max=None):
     """Numeric (value) axis spec. R analog: .dot_val_axis()"""
     ax = axis_num(label, gridT, ticktext)
     if origin_x is not None and gridT:
         step = gridT[1] - gridT[0] if len(gridT) > 1 else 0
+        # pretty() normally rounds past the data, headroom enough on
+        #   its own; extend a step only when the top tick would clip
+        #   the largest value
+        if val_max is not None and max(gridT) > val_max:
+            step = 0
         ax["range"] = [min(origin_x, min(gridT)), max(gridT) + step]
         ax["autorange"] = False
     return ax
@@ -139,6 +148,7 @@ def dot_plotly(x, y, orientation="v",
                fill=None, border=None, shape=21, pt_size=1,
                x_lab="", y_lab="", digits_d=2, pt_opacity=0.95,
                gridT=None, origin_x=None, main=None,
+               legend_title=None,
                facet=None, facet_name=None, n_col=None,
                axis_fmt="K", axis_x_pre="", axis_y_pre="",
                rotate_x=0, rotate_y=0,
@@ -153,6 +163,12 @@ def dot_plotly(x, y, orientation="v",
         border = get_option("pt_color", "#324E5C")
 
     title_size = round(16 * get_option("main_size", 1))
+    # largest plotted value, for the value-axis headroom
+    flat = (vals.to_numpy(dtype=float).ravel()
+            if isinstance(vals, pd.DataFrame)
+            else np.asarray(list(vals), dtype=float))
+    flat = flat[np.isfinite(flat)]
+    val_max = float(flat.max()) if flat.size else None
     seg_color = to_hex(style_opts["segment_color"])
 
     def val_ticks(orient):
@@ -173,30 +189,43 @@ def dot_plotly(x, y, orientation="v",
     # ---- paired dot plot (vals is a DataFrame, 2+ columns) --------
     # Single panel, cats on y, values on x; one legend entry per
     # y column.
-    if isinstance(vals, pd.DataFrame):
+    if isinstance(vals, pd.DataFrame) and facet is None:
         cats_all = [str(c) for c in cats]
         ms = _marker_style(21, pt_size, fill, border, pt_opacity)
-        seg_start = 0 if origin_x is None else origin_x
 
         fig = go.Figure()
+        # one connector per category joining the paired values, drawn
+        #   before the markers. The gap between the values is what the
+        #   display is read for, so a segment to the value axis would
+        #   say nothing.
+        if segments_x:
+            v_mat = vals.to_numpy(dtype=float)
+            seg_x, seg_y = [], []
+            for i, c in enumerate(cats_all):
+                row = v_mat[i]
+                row = row[np.isfinite(row)]
+                if row.size:
+                    seg_x += [row.min(), row.max(), None]
+                    seg_y += [c, c, None]
+            if seg_x:
+                fig.add_trace(go.Scatter(
+                    mode="lines", x=seg_x, y=seg_y,
+                    line=dict(color=seg_color, width=1),
+                    hoverinfo="skip", showlegend=False,
+                ))
         for si, col in enumerate(vals.columns):
             vals_si = vals[col].to_numpy(dtype=float)
             fill_si = (fill[si % len(fill)]
                        if isinstance(fill, (list, tuple)) else fill)
             clr = make_trans(fill_si, pt_opacity)
-            if segments_x:
-                fin = np.isfinite(vals_si)
-                _add_segment_trace(
-                    fig, [c for c, f in zip(cats_all, fin) if f],
-                    vals_si[fin].tolist(), seg_color, "h",
-                    seg_start)
             _add_marker_trace(
                 fig, cats_all, vals_si.tolist(),
                 marker=_marker_list(ms, len(vals_si),
                                     color_override=clr),
                 orientation="h", name=str(col), showlegend=True)
 
-        x_ax = _val_axis(x_lab, gridT, origin_x, val_ticks("h"))
+        x_ax = _val_axis(x_lab, gridT, origin_x, val_ticks("h"),
+                         val_max)
         y_ax = _cat_axis(y_lab, cats_all)
         apply_rotate(x_ax, y_ax)
         fig.update_layout(
@@ -205,8 +234,11 @@ def dot_plotly(x, y, orientation="v",
             shapes=(x_grid(gridT) if gridT else []) + plot_border(),
             margin=dict(t=round(title_size * 2.2) if main else 30),
             title=_dot_title(main),
-            legend=dict(font=dict(size=round(
-                16 * get_option("axis_size", 0.9)))),
+            legend=dict(
+                title=(None if legend_title is None
+                       else dict(text=legend_title)),
+                font=dict(size=round(
+                    16 * get_option("axis_size", 0.9)))),
             template=None,
             plot_bgcolor=to_hex(style_opts["panel_fill"]),
             paper_bgcolor=to_hex(style_opts["window_fill"]),
@@ -225,7 +257,12 @@ def dot_plotly(x, y, orientation="v",
         fac_levels = sorted({f for f in fac_char if f is not None})
 
         cats_in = [str(c) for c in cats]
-        vals_in = np.asarray(list(vals), dtype=float)
+        # a DataFrame carries one series per level of by, the same
+        #   multi-series geometry as the paired path, drawn within
+        #   every panel. One legend serves them all
+        grouped = isinstance(vals, pd.DataFrame)
+        vals_in = (vals.to_numpy(dtype=float) if grouped
+                   else np.asarray(list(vals), dtype=float))
 
         ms = _marker_style(shape, pt_size, fill, border,
                            pt_opacity)
@@ -251,6 +288,8 @@ def dot_plotly(x, y, orientation="v",
             fac_levels, facet_name or "",
             yanchor="bottom", ann_adjust=ann_adj, n_col=n_col)
 
+        n_col_use = n_col if n_col is not None else min(
+            len(fac_levels), 3)
         fig = go.Figure()
         axes = {}
         for i, lv in enumerate(fac_levels):
@@ -258,34 +297,60 @@ def dot_plotly(x, y, orientation="v",
             keep = [k for k, f in enumerate(fac_char) if f == lv]
             cats_i = [cats_in[k] for k in keep]
             vals_i = vals_in[keep]
-            fin = np.isfinite(vals_i)
-
-            if fin.any() and draw_seg:
-                # never above the panel's data minimum — avoid
-                # backward stems
-                panel_min = float(vals_i[fin].min())
-                seg_start = (min(origin_x, panel_min)
-                             if origin_x is not None else 0)
-                _add_segment_trace(
-                    fig, [c for c, f in zip(cats_i, fin) if f],
-                    vals_i[fin].tolist(), seg_color, orientation,
-                    seg_start, axis_suf=suf)
-            _add_marker_trace(
-                fig, cats_i,
-                [None if not np.isfinite(v) else v
-                 for v in vals_i],
-                marker=_marker_list(
-                    ms, len(vals_i),
-                    color_override=[col_map[c] for c in cats_i]),
-                orientation=orientation, hover_tmpl=hover_tmpl,
-                axis_suf=suf)
+            series = ([(str(col), vals_i[:, j],
+                        make_trans(to_hex(
+                            fill[j % len(fill)]
+                            if isinstance(fill, (list, tuple))
+                            else fill), pt_opacity))
+                       for j, col in enumerate(vals.columns)]
+                      if grouped else
+                      [(None, vals_i,
+                        [col_map[c] for c in cats_i])])
+            for name, v_s, clr in series:
+                fin = np.isfinite(v_s)
+                if fin.any() and draw_seg:
+                    # never above the panel's data minimum — avoid
+                    # backward stems
+                    panel_min = float(v_s[fin].min())
+                    seg_start = (min(origin_x, panel_min)
+                                 if origin_x is not None else 0)
+                    _add_segment_trace(
+                        fig, [c for c, f in zip(cats_i, fin) if f],
+                        v_s[fin].tolist(), seg_color, orientation,
+                        seg_start, axis_suf=suf)
+                if grouped:
+                    # a category with no cases in this panel has no
+                    #   dot, though it keeps its place on the axis
+                    _add_marker_trace(
+                        fig, [c for c, f in zip(cats_i, fin) if f],
+                        v_s[fin].tolist(),
+                        marker=_marker_list(ms, int(fin.sum()),
+                                            color_override=clr),
+                        orientation=orientation,
+                        hover_tmpl=hover_tmpl, name=name,
+                        showlegend=(i == 0), legendgroup=name,
+                        axis_suf=suf)
+                else:
+                    _add_marker_trace(
+                        fig, cats_i,
+                        [None if not np.isfinite(v) else v
+                         for v in v_s],
+                        marker=_marker_list(ms, len(v_s),
+                                            color_override=clr),
+                        orientation=orientation,
+                        hover_tmpl=hover_tmpl, axis_suf=suf)
 
             val_lbl = x_lab if orientation == "h" else y_lab
             cat_lbl = y_lab if orientation == "h" else x_lab
             val_ax = _val_axis(val_lbl if i == 0 else "",
                                gridT, origin_x,
-                               val_ticks(orientation))
+                               val_ticks(orientation), val_max)
             cat_ax = _cat_axis(cat_lbl, cats_i)
+            # the categories are shared, so a horizontal grid labels
+            #   them once per row, as R's subplot(shareY=TRUE)
+            if orientation == "h" and i % n_col_use:
+                cat_ax.update(showticklabels=False,
+                              title=dict(text=""))
             x_ax, y_ax = ((val_ax, cat_ax)
                           if orientation == "h"
                           else (cat_ax, val_ax))
@@ -301,7 +366,12 @@ def dot_plotly(x, y, orientation="v",
             annotations=anns,
             margin=dict(t=round(title_size * 2.2) if main else 40,
                         b=8, l=20, r=20),
-            showlegend=False,
+            showlegend=grouped,
+            legend=dict(
+                title=(None if legend_title is None or not grouped
+                       else dict(text=legend_title)),
+                font=dict(size=round(
+                    16 * get_option("axis_size", 0.9)))),
             title=_dot_title(main),
             template=None,
             plot_bgcolor=to_hex(style_opts["panel_fill"]),
@@ -360,7 +430,8 @@ def dot_plotly(x, y, orientation="v",
     cat_ax = _cat_axis(x_lab if orientation == "v" else y_lab,
                        cats_all)
     val_ax = _val_axis(x_lab if orientation == "h" else y_lab,
-                       gridT, origin_x, val_ticks(orientation))
+                       gridT, origin_x, val_ticks(orientation),
+                       val_max)
 
     if orientation == "h":
         margin = dict(l=70,
