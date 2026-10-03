@@ -115,7 +115,11 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   `horiz=False` stands the bars upright, and `form="bubble"` draws
   the bubble plot frequency matrix. With `one_plot=False`, or when
   the variables share no response scale, each categorical variable
-  is its own bar chart, a panel of one figure. Numeric bars can be colored by value:
+  is its own bar chart, a panel of one figure. The statistics come
+  back with the figure as `fig.stats`: `freq`, `prop`, `p_value`,
+  `n_miss` (lessR's names), a two-variable chart's `prop_row`,
+  `prop_col` and `cramer_v`, a statistic's `summary` and `values`,
+  and `text`, the console report, kept even with `quiet=True`. Numeric bars can be colored by value:
   `fill_split=v` (two colors split at `v`) or `fill_scaled=True`
   (an HCL gradient by distance from the split). `theme=` (green,
   slatered, sienna, blue, …) fills with a sequential palette in the

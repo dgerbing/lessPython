@@ -542,3 +542,125 @@ def nested_stats(cols, names, y_ser, stat, y_name, digits_d=2):
         title = (f"{STAT_LBL.get(stat, stat)} of {y_name} by "
                  + ", ".join(names))
     return [title, "-" * len(title), ""] + body.split("\n") + [""]
+
+
+# ----- the statistics returned with a Chart() figure ----------------
+
+class ChartStats:
+    """The statistics behind a Chart(), attached to the returned figure
+    as fig.stats. Each entry reads as an attribute, fig.stats.freq, or
+    by name, fig.stats["freq"], named as R's Chart() names its returned
+    list where it has a counterpart: freq, prop, values, p_value,
+    n_miss. text holds the console report, kept when quiet=True
+    suppresses its display. Not a dict subclass, so that an entry such
+    as values is not shadowed by a dict method. R analog: the list
+    that Chart() returns invisibly"""
+
+    def __init__(self, *args, **kw):
+        for k, v in dict(*args, **kw).items():
+            setattr(self, k, v)
+
+    def __getitem__(self, name):
+        try:
+            return self.__dict__[name]
+        except KeyError:
+            raise KeyError(name) from None
+
+    def __setitem__(self, name, value):
+        self.__dict__[name] = value
+
+    def __contains__(self, name):
+        return name in self.__dict__
+
+    def __iter__(self):
+        return iter(self.__dict__)
+
+    def __len__(self):
+        return len(self.__dict__)
+
+    def keys(self):
+        return self.__dict__.keys()
+
+    def get(self, name, default=None):
+        return self.__dict__.get(name, default)
+
+    def update(self, *args, **kw):
+        for k, v in dict(*args, **kw).items():
+            self.__dict__[k] = v
+
+    def __repr__(self):
+        keys = ", ".join(k for k in self.__dict__ if k != "text")
+        return (self.get("text", "").rstrip() + "\n\n"
+                f"[ChartStats: {keys}]")
+
+    __str__ = __repr__
+
+
+def _ordered_counts(s):
+    t = s.groupby(s, observed=True).size()
+    return t[t > 0]
+
+
+def _chisq_1d(cnt):
+    if len(cnt) < 2:
+        return {}
+    chi, p = sps.chisquare(cnt.to_numpy())
+    return dict(chisq=float(chi), df=len(cnt) - 1, p_value=float(p))
+
+
+def _xtab_stats(ct):
+    obs = ct.to_numpy()
+    out = dict(freq=ct, prop=ct / obs.sum(),
+               prop_col=ct / ct.sum(axis=0),
+               prop_row=ct.div(ct.sum(axis=1), axis=0))
+    chi, p, dof, _ = sps.chi2_contingency(obs, correction=False)
+    if np.isfinite(chi):
+        out.update(chisq=float(chi), df=int(dof), p_value=float(p),
+                   cramer_v=float(np.sqrt(chi / ((min(obs.shape) - 1)
+                                                 * obs.sum()))))
+    return out
+
+
+def chart_stats_data(x_ser, by_ser, y_ser, stat, facet_ser=None,
+                     n_miss=None):
+    """The numbers of the Chart() report as pandas objects: counts
+    with proportions and the chi-square test of equal probabilities;
+    a cross-tabulation with cell, column, and row proportions,
+    Cramer's V, and the test of independence; or the summary of y
+    over the levels of x and the plotted values, or the table of the
+    statistic over the grouping"""
+    st = ChartStats()
+    if y_ser is None:
+        grp = by_ser if by_ser is not None else facet_ser
+        if grp is None:
+            cnt = _ordered_counts(x_ser)
+            st.update(n_dim=1, freq=cnt, prop=cnt / cnt.sum(),
+                      n_miss=n_miss, **_chisq_1d(cnt))
+        elif by_ser is not None and facet_ser is not None:
+            # one cross-tabulation per panel
+            panels = {}
+            for lv in _category_order_sorted(facet_ser):
+                m = facet_ser == lv
+                panels[lv] = ChartStats(
+                    _xtab_stats(pd.crosstab(by_ser[m], x_ser[m])))
+            st.update(n_dim=3, panels=panels)
+        else:
+            st.update(n_dim=2, **_xtab_stats(pd.crosstab(grp, x_ser)))
+        return st
+
+    fun = STAT_FUN[stat]
+    if by_ser is None and facet_ser is None:
+        y = pd.to_numeric(y_ser)
+        g = y.groupby(x_ser, observed=True, sort=True)
+        summary = pd.DataFrame({
+            "n": g.count(), "miss": g.size() - g.count(),
+            "mean": g.mean(), "sd": g.std(ddof=1), "min": g.min(),
+            "mdn": g.median(), "max": g.max()})
+        st.update(n_dim=1, summary=summary, values=fun(g))
+        return st
+    grp = by_ser if by_ser is not None else facet_ser
+    df = pd.DataFrame({"g": grp, "x": x_ser, "y": pd.to_numeric(y_ser)})
+    tbl = (df.groupby(["g", "x"], observed=True)["y"].agg(fun)
+           .unstack("x"))
+    st.update(n_dim=2, summary=tbl)
+    return st

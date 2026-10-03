@@ -21,6 +21,7 @@
 # the Trellis chart — stacked panels of horizontal count bars,
 # the plotly port of R's lattice rendering.
 
+import contextvars
 import math
 
 import numpy as np
@@ -43,7 +44,9 @@ from .plt_plotly import plt_plotly
 from .profile_plotly import profile_facet_plotly
 from .radar_plotly import radar_plotly
 from .plotly_utils import build_title, font_scaled
-from .stats_out import chart_stats, resolve_quiet
+from .stats_out import (
+    ChartStats, chart_stats, chart_stats_data, resolve_quiet,
+)
 from .utils import (
     STAT_FUN, STAT_LBL, category_order as _category_order,
     facet_values, get_column as _get_column, get_option, pretty,
@@ -264,11 +267,12 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
         if sort != "0":
             order = list(wm.sort_values(ascending=(sort == "+"),
                                         kind="stable").index)
-        if not resolve_quiet(quiet):
-            print("\n".join(items_stats_lines(
-                frq[order], wm[order],
-                "Frequencies of Responses by Variable", numeric,
-                with_sum=True)))
+        _set_stats(ChartStats(n_dim=2, freq=frq[order].T,
+                              mean=wm[order]),
+                   items_stats_lines(
+                       frq[order], wm[order],
+                       "Frequencies of Responses by Variable", numeric,
+                       with_sum=True), quiet)
         # the matrix lists its first row at the top, so reverse the
         #   order to draw the first item at the bottom, as R does
         mat = frq[order[::-1]].T.astype(float)
@@ -304,10 +308,11 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
         if sort != "0":
             order = list(wm.sort_values(ascending=(sort == "+"),
                                         kind="stable").index)
-        if show:
-            # the table lists the items top of the chart first
-            print("\n".join(_items_print(
-                frq[order[::-1]], wm[order[::-1]], numeric)))
+        # the table lists the items top of the chart first
+        _set_stats(ChartStats(n_dim=2, freq=frq[order[::-1]].T,
+                              mean=wm[order[::-1]]),
+                   _items_print(frq[order[::-1]], wm[order[::-1]],
+                                numeric), quiet)
         return bc_items_plotly(
             frq, order, fill_use,
             labels="%" if labels is None else labels,
@@ -349,25 +354,27 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
     facet_order = _category_order(fac[keep])
     resp = list(frq.index)
     tbls = {}
+    rep_lines, panels = [], {}
     for lv in facet_order:
         m = keep & (fac == lv)
         f_lv, w_lv, _ = items_table([c[m] for c in cols], items) \
             if all(c[m].notna().any() for c in cols) else (
                 pd.DataFrame(0, index=resp, columns=items), None, None)
         f_lv = f_lv.reindex(index=resp, fill_value=0)
-        if show:
-            if w_lv is None:
-                w_lv = pd.Series(np.nan, index=items)
-            print("\n".join(_items_print(
-                f_lv, w_lv, numeric,
-                f"Frequencies of Responses by Variable, "
-                f"{facet_name}: {lv}")))
+        if w_lv is None:
+            w_lv = pd.Series(np.nan, index=items)
+        rep_lines += _items_print(
+            f_lv, w_lv, numeric,
+            f"Frequencies of Responses by Variable, "
+            f"{facet_name}: {lv}")
+        panels[lv] = ChartStats(freq=f_lv.T, mean=w_lv)
         t = f_lv.astype(float)
         if stack100:
             tot = t.sum(axis=0)
             t = t.div(tot.where(tot != 0), axis=1).fillna(0)
         # first item at the top, or at the left of a vertical chart
         tbls[lv] = t[items[::-1]] if horiz else t[items]
+    _set_stats(ChartStats(n_dim=3, panels=panels), rep_lines, quiet)
     tbl = pd.DataFrame([tbls[lv].sum(axis=0) for lv in facet_order],
                        index=facet_order)
     tbl.index.name = facet_name
@@ -428,10 +435,12 @@ def _chart_per_variable(data, items, cols, fill, xlab, main, quiet):
                         horizontal_spacing=0.08,
                         vertical_spacing=max(0.08, 0.3 / n_row))
     st = plotly_style()
+    rep_lines, per_var = [], {}
     for k, (nm, c) in enumerate(keep):
-        if show:
-            print("\n".join(_counts_1d(c.dropna(), nm,
-                                       int(c.isna().sum()))) + "\n")
+        rep_lines += _counts_1d(c.dropna(), nm,
+                                int(c.isna().sum())) + [""]
+        per_var[nm] = chart_stats_data(c.dropna(), None, None, None,
+                                       n_miss=int(c.isna().sum()))
         order = _category_order(c.dropna())
         cnt = c.value_counts().reindex(order, fill_value=0)
         f = (fill if isinstance(fill, (list, tuple))
@@ -453,6 +462,8 @@ def _chart_per_variable(data, items, cols, fill, xlab, main, quiet):
                          title_text="Count" if cc == 1 else "")
         fig.update_xaxes(row=r, col=cc, type="category",
                          title_text=xlab or "")
+    _set_stats(ChartStats(n_dim=1, variables=per_var), rep_lines,
+               quiet)
     fig.update_layout(
         template=None, height=140 + 260 * n_row,
         plot_bgcolor=to_hex(st["panel_fill"]),
@@ -465,6 +476,43 @@ def _items_print(frq, wm, numeric, title=None):
     return items_stats_lines(
         frq, wm, title or "Frequencies of Responses by Variable",
         numeric)
+
+
+# the statistics of the current Chart() call, returned with its figure
+_CALL_STATS = contextvars.ContextVar("lessPy_chart_stats", default=None)
+
+
+def _set_stats(st, lines, quiet):
+    """Keep the statistics of this call, with the report as their
+    text, and display the report unless quiet."""
+    st["text"] = "\n".join(lines)
+    _CALL_STATS.set(st)
+    if not resolve_quiet(quiet):
+        print(st["text"])
+
+
+def _attach_stats(func):
+    """Return the figure with the call's statistics as fig.stats. A
+    plotly Figure accepts no new attributes by assignment, so it is
+    set past plotly's validation; it survives update_layout() and
+    stays out of the figure's JSON, though go.Figure(fig) copies the
+    figure without it."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        token = _CALL_STATS.set(None)
+        try:
+            fig = func(*args, **kwargs)
+            st = _CALL_STATS.get()
+        finally:
+            _CALL_STATS.reset(token)
+        if fig is not None and hasattr(fig, "layout"):
+            object.__setattr__(fig, "stats",
+                               st if st is not None else ChartStats())
+        return fig
+
+    return wrapper
 
 
 def _profile_fill(theme):
@@ -514,7 +562,7 @@ def _dot_diff_lines(cats, ydf, x_name):
 
 
 def _dot_paired(cats, ydf, sort, sort_miss, origin_x, show_diff,
-                x_name, **render):
+                x_name, quiet=None, **render):
     """Order a multi-series dot plot and draw it. Two series are a
     pair, read for the gap between them, so by default they are
     ordered by that difference, ascending so the largest positive
@@ -532,8 +580,23 @@ def _dot_paired(cats, ydf, sort, sort_miss, origin_x, show_diff,
                            kind="stable")
         cats = [cats[i] for i in order]
         ydf = ydf.iloc[order]
-    if dif_pair and show_diff:
-        print("\n".join(_dot_diff_lines(cats, ydf, x_name)))
+    if dif_pair:
+        # the difference the display presents, kept with the figure; it
+        #   is reported where R lists it (show_diff), unless quiet
+        dif = pd.Series(
+            (ydf.iloc[:, 1] - ydf.iloc[:, 0]).to_numpy(dtype=float),
+            index=cats, name=f"{ydf.columns[1]} - {ydf.columns[0]}")
+        st = _CALL_STATS.get()
+        if st is None:
+            st = ChartStats(n_dim=2, values=ydf.set_axis(cats), text="")
+            _CALL_STATS.set(st)
+        st["diff"] = dif
+        if show_diff:
+            lines = _dot_diff_lines(cats, ydf, x_name)
+            st["text"] = "\n".join(
+                [t for t in (st.get("text", ""), "\n".join(lines)) if t])
+            if not resolve_quiet(quiet):
+                print("\n".join(lines))
     origin, gridT = _dot_origin_grid(
         ydf.to_numpy(dtype=float).ravel(),
         origin_in=0 if (dif_pair and origin_x is None) else origin_x)
@@ -615,6 +678,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
     Variables are strings naming columns of the DataFrame `data`.
     Returns a plotly Figure; call .show() to display from a script.
+    The statistics behind the chart come with it as fig.stats, read
+    as attributes or by name: fig.stats.freq, fig.stats.p_value,
+    fig.stats.text (the console report, kept when quiet=True), named
+    as R's Chart() names its returned list.
     """
 
     # ----- validate parameters ------------------------------------
@@ -904,7 +971,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         x_lab_dot = (xlab if xlab else ylab if ylab else val_lab)
         return _dot_paired(
             cats, ydf.reset_index(drop=True), sort, sort_miss,
-            origin_x, show_diff=not resolve_quiet(quiet), x_name=x,
+            origin_x, show_diff=True, quiet=quiet, x_name=x,
             fill=fill, border=color, pt_size=pt_size,
             x_lab=x_lab_dot, y_lab=x,
             digits_d=2 if digits_d is None else digits_d,
@@ -1103,25 +1170,37 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
                 f"have a numerical variable y='{y}', so specify "
                 'stat to define the aggregation, e.g., stat="mean"')
 
-    # accompanying statistics: frequencies, or the stat of y
-    if not resolve_quiet(quiet):
-        y_out = (y_ser if y_ser is not None
-                 and stat in STAT_FUN else None)
-        if by_more_sers and (y_ser is None or y_out is not None):
-            from .stats_out import nested_stats
-            print("\n".join(nested_stats(
-                [x_ser, by_ser] + by_more_sers, [x, by] + by_more,
-                y_out, stat, y,
-                2 if digits_d is None else digits_d)))
-        elif y_ser is None or y_out is not None:
-            var_lbl = data.attrs.get("variable_labels", {}) or {}
-            print("\n".join(chart_stats(
-                x_ser, by_ser, y_out, stat, x, by, y,
-                2 if digits_d is None else digits_d,
-                stack100=stack100, n_miss=n_miss_x,
-                x_lbl=var_lbl.get(x), y_lbl=var_lbl.get(y),
-                facet_ser=facet_ser, facet_name=facet_name,
-                form=form)))
+    # accompanying statistics: frequencies, or the stat of y. They are
+    #   computed whether or not displayed, and returned with the figure
+    #   as fig.stats, as R's Chart() returns its list
+    y_out = (y_ser if y_ser is not None
+             and stat in STAT_FUN else None)
+    if by_more_sers and (y_ser is None or y_out is not None):
+        from .stats_out import nested_stats
+        lines = nested_stats(
+            [x_ser, by_ser] + by_more_sers, [x, by] + by_more,
+            y_out, stat, y, 2 if digits_d is None else digits_d)
+        cols_n = [x_ser, by_ser] + by_more_sers
+        df_n = pd.DataFrame({nm: c for nm, c in
+                             zip([x, by] + by_more, cols_n)})
+        _set_stats(ChartStats(
+            n_dim=len(cols_n),
+            freq=df_n.groupby([x, by] + by_more, observed=True).size()
+            if y_out is None else None),
+            lines, quiet)
+    elif y_ser is None or y_out is not None:
+        var_lbl = data.attrs.get("variable_labels", {}) or {}
+        lines = chart_stats(
+            x_ser, by_ser, y_out, stat, x, by, y,
+            2 if digits_d is None else digits_d,
+            stack100=stack100, n_miss=n_miss_x,
+            x_lbl=var_lbl.get(x), y_lbl=var_lbl.get(y),
+            facet_ser=facet_ser, facet_name=facet_name,
+            form=form)
+        _set_stats(chart_stats_data(x_ser, by_ser, y_out, stat,
+                                    facet_ser=facet_ser,
+                                    n_miss=n_miss_x),
+                   lines, quiet)
 
     # labels default for aggregated data; for counts leave labels
     # None so bc_plotly shows the value with % lines in hover
@@ -1783,7 +1862,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             return _dot_paired(
                 cats, ydf.reset_index(drop=True), sort, sort_miss,
                 origin_x,
-                show_diff=not quiet_use and y_ser is None,
+                show_diff=y_ser is None, quiet=quiet,
                 x_name=x,
                 fill=fill, border=color, pt_size=pt_size,
                 x_lab=val_lab, y_lab=x, digits_d=digits_d,
@@ -1911,4 +1990,4 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
 
 # font_size= scales all text of the returned figure
-Chart = font_scaled(Chart)
+Chart = font_scaled(_attach_stats(Chart))

@@ -1109,4 +1109,17 @@ for visual output (Cars93).
           variables skipped; none left raises R's "No categorical
           variables" advice (pandas Categorical). facet refused with
           R's reason. one_plot=True on unshared items raises.
+    - [x] returned statistics (user's call, Oct 2026: attach to the
+          figure): fig.stats, a ChartStats (attribute or ["name"]
+          access; not a dict subclass, so "values" is not shadowed),
+          set past plotly's validation by object.__setattr__ via a
+          ContextVar and the _attach_stats wrapper, so every return
+          path is covered; survives update_layout(), stays out of
+          to_dict(), lost by go.Figure(fig). R's names where they
+          exist (freq, prop, values, p_value, n_miss) plus chisq/df,
+          prop_col/prop_row/cramer_v, summary, diff, panels,
+          variables, mean, and text (the report, kept under
+          quiet=True). Numbers equal R's returned list on Employee.
+          Unlike R, every form carries them (R returns them for the
+          bar chart only). X()/XY() not yet.
 
