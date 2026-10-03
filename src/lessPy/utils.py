@@ -159,9 +159,10 @@ def resolve_facet(data, facet, fun):
                 "facet names a categorical variable for its "
                 "panels")
         if len(facet) > 2:
-            print(f"facet has {len(facet)} variables. {fun}() "
-                  "uses the first two: "
-                  f"{facet[0]}, {facet[1]}.")
+            from .stats_out import advise
+            advise(f"facet has {len(facet)} variables. {fun}() "
+                   "uses the first two: "
+                   f"{facet[0]}, {facet[1]}.")
         f1 = get_column(data, facet[0], "facet")
         if len(facet) == 1:
             return f1, facet[0], None, None

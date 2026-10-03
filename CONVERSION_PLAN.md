@@ -1122,4 +1122,23 @@ for visual output (Cars93).
           quiet=True). Numbers equal R's returned list on Employee.
           Unlike R, every form carries them (R returns them for the
           bar chart only). X()/XY() not yet.
+    - [x] X() and XY() also return fig.stats (attach_stats in
+          stats_out, shared with Chart). Their reports print from
+          many places, so the wrapper runs them with quiet=False,
+          captures stdout as stats.text, and shows it unless quiet;
+          advisories (R's message(), e.g. the 3-facet notice) go
+          through advise() to the real output and show regardless.
+          Numbers recorded where computed (record_stats): x_stats
+          summary, histogram bins (R's bin_width/n_bins/breaks/mids/
+          counts/prop/cprop), density bw, Shapiro W/p, XY
+          correlation (r, t, df, p_value, CI; cor by group) and fit
+          (mse, rsq). FIXED: the XY fit MSE divided by n; R's
+          .plt.fit() uses SSE/(n - 2) - now identical
+          (134,129,397.124 on Years/Salary).
+    - [x] XY fit="lm" reports its line as R's .plt.fit() does
+          ("  Line: b0 = ...    b1 = ..." / "  Linear Model MSE =
+          n,nnn.nnn   Rsq = ...", "Gender: M  Line: ..." per by
+          group) and fig.stats.fit gains b0/b1; identical to R on
+          Years/Salary overall and by Gender. Other fits keep the
+          one-line fit="..." report.
 

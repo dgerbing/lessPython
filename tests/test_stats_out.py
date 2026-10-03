@@ -29,8 +29,13 @@ def test_xy_correlation(d, capsys):
 def test_xy_fit_stats(d, capsys):
     XY("Years", "Salary", data=d, fit="lm")
     out = capsys.readouterr().out
-    assert 'fit="lm"' in out
-    assert "R-squared" in out
+    # the line and its fit as R's .plt.fit() reports them
+    assert "  Line: b0 = " in out
+    assert "  Linear Model MSE = " in out and "Rsq = " in out
+    # other fits keep their one-line report
+    XY("Years", "Salary", data=d, fit="loess")
+    out = capsys.readouterr().out
+    assert 'fit="loess"' in out and "R-squared" in out
 
 
 def test_xy_quiet(d, capsys):

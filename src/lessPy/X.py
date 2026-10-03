@@ -247,6 +247,8 @@ def X(x, by=None, facet=None, data=None, filter=None,
         if form == "density" and kind in ("normal", "both"):
             if 2 < len(fx) < 5000:     # R dn.main.R range
                 W, p = sps.shapiro(fx)
+                from .stats_out import record_stats
+                record_stats(shapiro_W=float(W), shapiro_p=float(p))
                 print("\nNull hypothesis is a normal population")
                 print("Shapiro-Wilk normality test:  "
                       f"W = {W:.4f},  p-value = {p:.4f}")
@@ -423,4 +425,5 @@ def X(x, by=None, facet=None, data=None, filter=None,
 
 
 # font_size= scales all text of the returned figure
-X = font_scaled(X)
+from .stats_out import attach_stats as _attach_stats  # noqa: E402
+X = font_scaled(_attach_stats(X, capture=True))

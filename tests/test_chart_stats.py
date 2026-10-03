@@ -53,3 +53,38 @@ def test_stats_other_forms(emp):
     st = Chart("Dept", by=["Gender", "Plan"], form="treemap",
                data=emp, quiet=True).stats
     assert st.freq.sum() == 36
+
+
+# ----- X() and XY() -------------------------------------------------
+
+def test_x_stats_match_R(emp, capsys):
+    from lessPy import X
+    st = X("Salary", data=emp, quiet=True).stats
+    assert capsys.readouterr().out == ""        # quiet shows nothing
+    assert round(st.mean, 3) == 83795.557            # R's values
+    assert round(st.sd, 3) == 21799.533
+    assert st.bin_width == 10000 and st.n_bins == 10
+    assert st.counts == [4, 8, 8, 5, 3, 5, 1, 1, 1, 1]
+    assert "--- Salary ---" in st.text               # report kept
+    st = X("Salary", form="density", data=emp, quiet=True).stats
+    assert round(st.bw, 4) == 9529.0447
+
+
+def test_xy_stats_match_R(emp):
+    from lessPy import XY
+    st = XY("Years", "Salary", fit="lm", data=emp, quiet=True).stats
+    assert round(st.r, 3) == 0.852
+    assert round(st.fit["rsq"], 3) == 0.726
+    # error variance on n - 2 df, as R's .plt.fit()
+    assert round(st.fit["mse"], 3) == 134129397.124
+    assert round(st.fit["b0"], 3) == 52710.898       # R's line
+    assert round(st.fit["b1"], 3) == 3249.552
+    st = XY("Years", "Salary", by="Gender", data=emp, quiet=True).stats
+    assert set(st.cor) == {"M", "W"}
+
+
+def test_advisory_shown_when_quiet(emp, capsys):
+    # an advisory is not part of the report, so quiet does not hide it
+    from lessPy import X
+    X("Salary", data=emp, facet=["Dept", "Gender", "Dept"], quiet=True)
+    assert "uses the first two" in capsys.readouterr().out

@@ -107,6 +107,18 @@ def hs_plotly(x, by=None, x_name=None, by_name=None,
         xg = xg[np.isfinite(xg)]
         y_mat[:, g] = bin_counts(pd.Series(xg))
 
+    # the bins as R's X() returns them
+    from .stats_out import record_stats
+    cnt = y_mat[:, 0] if G == 1 else pd.DataFrame(y_mat, columns=groups)
+    tot = cnt.sum() if G == 1 else cnt.sum(axis=0)
+    record_stats(bin_width=float(widths[0]), n_bins=n_bins,
+                 breaks=list(breaks), mids=mids.tolist(),
+                 counts=(cnt.astype(int).tolist() if G == 1
+                         else cnt.astype(int)),
+                 prop=(cnt / tot).tolist() if G == 1 else cnt / tot,
+                 cprop=(np.cumsum(cnt) / tot).tolist() if G == 1
+                 else cnt.cumsum() / tot)
+
     # density: normalize each group to unit area; proportion: to 1
     if not freq:
         for g in range(G):

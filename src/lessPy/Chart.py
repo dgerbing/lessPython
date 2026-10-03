@@ -21,7 +21,6 @@
 # the Trellis chart — stacked panels of horizontal count bars,
 # the plotly port of R's lattice rendering.
 
-import contextvars
 import math
 
 import numpy as np
@@ -45,7 +44,8 @@ from .profile_plotly import profile_facet_plotly
 from .radar_plotly import radar_plotly
 from .plotly_utils import build_title, font_scaled
 from .stats_out import (
-    ChartStats, chart_stats, chart_stats_data, resolve_quiet,
+    CALL_STATS, ChartStats, attach_stats, chart_stats,
+    chart_stats_data, resolve_quiet,
 )
 from .utils import (
     STAT_FUN, STAT_LBL, category_order as _category_order,
@@ -478,41 +478,13 @@ def _items_print(frq, wm, numeric, title=None):
         numeric)
 
 
-# the statistics of the current Chart() call, returned with its figure
-_CALL_STATS = contextvars.ContextVar("lessPy_chart_stats", default=None)
-
-
 def _set_stats(st, lines, quiet):
     """Keep the statistics of this call, with the report as their
     text, and display the report unless quiet."""
     st["text"] = "\n".join(lines)
-    _CALL_STATS.set(st)
+    CALL_STATS.set(st)
     if not resolve_quiet(quiet):
         print(st["text"])
-
-
-def _attach_stats(func):
-    """Return the figure with the call's statistics as fig.stats. A
-    plotly Figure accepts no new attributes by assignment, so it is
-    set past plotly's validation; it survives update_layout() and
-    stays out of the figure's JSON, though go.Figure(fig) copies the
-    figure without it."""
-    import functools
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        token = _CALL_STATS.set(None)
-        try:
-            fig = func(*args, **kwargs)
-            st = _CALL_STATS.get()
-        finally:
-            _CALL_STATS.reset(token)
-        if fig is not None and hasattr(fig, "layout"):
-            object.__setattr__(fig, "stats",
-                               st if st is not None else ChartStats())
-        return fig
-
-    return wrapper
 
 
 def _profile_fill(theme):
@@ -586,10 +558,10 @@ def _dot_paired(cats, ydf, sort, sort_miss, origin_x, show_diff,
         dif = pd.Series(
             (ydf.iloc[:, 1] - ydf.iloc[:, 0]).to_numpy(dtype=float),
             index=cats, name=f"{ydf.columns[1]} - {ydf.columns[0]}")
-        st = _CALL_STATS.get()
+        st = CALL_STATS.get()
         if st is None:
             st = ChartStats(n_dim=2, values=ydf.set_axis(cats), text="")
-            _CALL_STATS.set(st)
+            CALL_STATS.set(st)
         st["diff"] = dif
         if show_diff:
             lines = _dot_diff_lines(cats, ydf, x_name)
@@ -1990,4 +1962,4 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
 
 # font_size= scales all text of the returned figure
-Chart = font_scaled(_attach_stats(Chart))
+Chart = font_scaled(attach_stats(Chart))

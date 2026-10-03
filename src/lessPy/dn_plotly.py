@@ -58,6 +58,8 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
         from .utils import bw_nrd0
         bw = bw_nrd0(x)
     h = bw * adjust
+    from .stats_out import record_stats
+    record_stats(bw=float(h))
 
     if facet is not None:
         if fill_miss and by is not None:

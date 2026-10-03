@@ -32,11 +32,17 @@ def x_stats(xv, x_name, digits_d=2):
     lines = [f"--- {x_name} ---",
              f"n: {n}   missing: {miss}"]
     if n < 2:
+        record_stats(n=n, n_miss=miss)
         return lines
     q1, med, q3 = np.percentile(v, [25, 50, 75])
     iqr = q3 - q1
     out_v = np.sort(v[(v < q1 - 1.5 * iqr)
                       | (v > q3 + 1.5 * iqr)])
+    record_stats(n=n, n_miss=miss, mean=float(v.mean()),
+                 sd=float(v.std(ddof=1)), min=float(v.min()),
+                 q1=float(q1), median=float(med), q3=float(q3),
+                 max=float(v.max()), iqr=float(iqr),
+                 outliers=out_v.tolist())
     lines += [
         f"mean: {fmt(v.mean(), d)}   sd: {fmt(v.std(ddof=1), d)}",
         f"min: {fmt(v.min(), d)}   1st Qu: {fmt(q1, d)}   "
@@ -94,27 +100,68 @@ def _cor_block(xg, yg, label, d):
 
 
 def xy_stats(groups, x_name, y_name, fit_stats=None,
-             digits_d=2):
+             digits_d=2, by_name=None):
     """Correlation (t test, Fisher-z CI) for the relationship
     XY() displays, overall or per by= group, plus fit-line MSE
     when a fit line is drawn."""
     lines = [f"--- {x_name} and {y_name} ---"]
+    cors = {}
     for nm, xg, yg in groups:
         label = "" if nm is None else f" ({nm})"
-        lines += _cor_block(np.asarray(xg, float),
-                            np.asarray(yg, float), label,
-                            digits_d)
+        xg, yg = np.asarray(xg, float), np.asarray(yg, float)
+        lines += _cor_block(xg, yg, label, digits_d)
+        cors[nm] = _cor_values(xg, yg)
+    fits = []
     for fs in (fit_stats or []):
-        nm, fit, ys, f = fs
+        nm, fit, ys, f = fs[:4]
+        xs = fs[4] if len(fs) > 4 else None
         label = "" if nm is None else f" ({nm})"
-        mse = float(np.mean((ys - f) ** 2))
+        # the error variance of one predictor, n - 2 degrees of
+        #   freedom, as R's .plt.fit() computes it for every fit
+        sse = float(((ys - f) ** 2).sum())
+        mse = sse / (len(ys) - 2) if len(ys) > 2 else np.nan
         tss = float(((ys - ys.mean()) ** 2).sum())
         rsq = 1 - float(((ys - f) ** 2).sum()) / tss \
             if tss > 0 else np.nan
-        lines.append(
-            f'fit="{fit}"{label}:  MSE: {fmt(mse, digits_d + 1)}'
-            f"   R-squared: {fmt(rsq, 3)}")
+        entry = dict(group=nm, fit=fit, mse=mse, rsq=rsq)
+        if fit == "lm" and xs is not None and len(xs) > 1:
+            # the line and its fit as R's .plt.fit() reports them
+            b1, b0 = np.polyfit(np.asarray(xs, float),
+                                np.asarray(ys, float), 1)
+            entry.update(b0=float(b0), b1=float(b1))
+            head = ("  " if nm is None
+                    else f"{by_name}: {nm}  " if by_name
+                    else f"{nm}:  ")
+            lines += [f"{head}Line: b0 = {b0:.3f}    b1 = {b1:.3f}",
+                      f"  Linear Model MSE = {mse:,.3f}   "
+                      f"Rsq = {rsq:.3f}"]
+        else:
+            lines.append(
+                f'fit="{fit}"{label}:  MSE: {fmt(mse, digits_d + 1)}'
+                f"   R-squared: {fmt(rsq, 3)}")
+        fits.append(entry)
+    # one relationship reads as its own entries; groups by name
+    if list(cors) == [None]:
+        record_stats(**cors[None])
+    else:
+        record_stats(cor=cors)
+    if fits:
+        record_stats(fit=fits if len(fits) > 1 else fits[0])
     return lines
+
+
+def _cor_values(xg, yg):
+    """The correlation of _cor_block as numbers."""
+    n = len(xg)
+    if n < 4:
+        return dict(n=n)
+    r = float(np.corrcoef(xg, yg)[0, 1])
+    tval = r * np.sqrt((n - 2) / max(1 - r * r, 1e-12))
+    p = 2 * sps.t.sf(abs(tval), n - 2)
+    zlo = np.arctanh(r) - 1.959964 / np.sqrt(n - 3)
+    zhi = np.arctanh(r) + 1.959964 / np.sqrt(n - 3)
+    return dict(n=n, r=r, t=float(tval), df=n - 2, p_value=float(p),
+                ci_lb=float(np.tanh(zlo)), ci_ub=float(np.tanh(zhi)))
 
 
 def md_outliers(xv, yv, ids, MD_cut, out_cut):
@@ -664,3 +711,80 @@ def chart_stats_data(x_ser, by_ser, y_ser, stat, facet_ser=None,
            .unstack("x"))
     st.update(n_dim=2, summary=tbl)
     return st
+
+
+
+# ----- statistics of the current call, returned with its figure -----
+
+import contextvars as _contextvars
+
+CALL_STATS = _contextvars.ContextVar("lessPy_call_stats", default=None)
+
+# the caller's output while a report is captured, for advisories
+_REAL_OUT = _contextvars.ContextVar("lessPy_real_stdout", default=None)
+
+
+def advise(msg):
+    """An advisory, shown whether or not the report is quiet, as R's
+    message() is: written past a captured report to the caller's
+    output."""
+    out = _REAL_OUT.get()
+    if out is None:
+        print(msg)
+    else:
+        print(msg, file=out)
+
+
+def record_stats(**kw):
+    """Add entries to the statistics of the current Chart(), X(), or
+    XY() call; a no-op outside one."""
+    st = CALL_STATS.get()
+    if st is not None:
+        st.update(kw)
+
+
+def attach_stats(func, capture=False):
+    """Return the figure with the call's statistics as fig.stats. A
+    plotly Figure accepts no new attributes by assignment, so it is
+    set past plotly's validation; it survives update_layout() and
+    stays out of the figure's JSON, though go.Figure(fig) copies the
+    figure without it.
+
+    capture: the function prints its report from many places, so run
+    it with quiet=False and its output captured as stats.text, then
+    display that text unless the caller asked for quiet."""
+    import functools
+    import io
+    import sys
+    from contextlib import redirect_stdout
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        token = CALL_STATS.set(ChartStats() if capture else None)
+        try:
+            if capture:
+                quiet = resolve_quiet(kwargs.get("quiet"))
+                kwargs["quiet"] = False
+                buf = io.StringIO()
+                real = _REAL_OUT.set(sys.stdout)
+                try:
+                    with redirect_stdout(buf):
+                        fig = func(*args, **kwargs)
+                finally:
+                    _REAL_OUT.reset(real)
+                    out = buf.getvalue()
+                    if not quiet:
+                        sys.stdout.write(out)
+                st = CALL_STATS.get()
+                st["text"] = out.rstrip("\n")
+            else:
+                fig = func(*args, **kwargs)
+                st = CALL_STATS.get()
+        finally:
+            CALL_STATS.reset(token)
+        if fig is not None and hasattr(fig, "layout"):
+            object.__setattr__(fig, "stats",
+                               st if st is not None else ChartStats())
+        return fig
+
+    return wrapper

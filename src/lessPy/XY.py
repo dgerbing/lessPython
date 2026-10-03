@@ -1676,7 +1676,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             if fit == "loess":         # R: bands for lm and loess
                 xs, ys_s, f, se_f = _loess(xg, yg, span)
                 fit_lines.append({"name": nm, "x": xs, "y": f})
-                fit_stats.append((nm, fit, ys_s, f))
+                fit_stats.append((nm, fit, ys_s, f, xs))
                 if fit_errors:
                     err_lines.append((xs, ys_s, f))
                 for lv in se_levels:
@@ -1690,7 +1690,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             okf = np.isfinite(f)       # exp/log back-transform NaN
             fit_lines.append({"name": nm, "x": xs[okf],
                               "y": f[okf]})
-            fit_stats.append((nm, fit, ys_s[okf], f[okf]))
+            fit_stats.append((nm, fit, ys_s[okf], f[okf], xs[okf]))
             if fit_errors:
                 err_lines.append((xs[okf], ys_s[okf], f[okf]))
             if fit == "lm":
@@ -1742,7 +1742,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         _apply_rotate(fig, rotate_x, rotate_y)
         if not resolve_quiet(quiet):
             print("\n".join(xy_stats(groups, x, y, fit_stats,
-                                     digits_d)))
+                                     digits_d, by_name=by)))
             if md_lines is not None:
                 print("\n" + "\n".join(md_lines))
         return fig
@@ -1834,7 +1834,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             _add_means(fig, xv, yv)
         if not resolve_quiet(quiet):
             print("\n".join(xy_stats(groups, x, y, fit_stats,
-                                     digits_d)))
+                                     digits_d, by_name=by)))
         return fig
 
     fig = plt_plotly(
@@ -1981,7 +1981,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
                 float_format=lambda v: f"{v:.{digits_d + 2}f}"))
     elif not is_date and not resolve_quiet(quiet):
         print("\n".join(xy_stats(groups, x, y, fit_stats,
-                                 digits_d)))
+                                 digits_d, by_name=by)))
         if fit_new is not None and fit in _FIT_NEW_OK:
             print("\n".join(_fit_new_table(
                 groups, fit, fit_power, fit_new, x, y, digits_d)))
@@ -2004,4 +2004,5 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
 
 
 # font_size= scales all text of the returned figure
-XY = font_scaled(XY)
+from .stats_out import attach_stats as _attach_stats  # noqa: E402
+XY = font_scaled(_attach_stats(XY, capture=True))
