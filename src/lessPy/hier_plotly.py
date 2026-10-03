@@ -19,9 +19,9 @@
 #     ported; fills default to BASE_COLORS keyed by top-level
 #     category (lessR's default "colors" theme). A sequential
 #     palette NAMED in fill= is ported (read by magnitude off the
-#     palette's ramp, R's pal_explicit branch). For the same
-#     reason the per-facet luminance remap (fill_vec_byfac) has
-#     no counterpart: every facet panel uses the global fills.
+#     palette's ramp, R's pal_explicit branch), and with facet=
+#     each panel reads its own shades off that ramp
+#     (fill_vec_byfac); other fills are the same in every panel.
 
 import numpy as np
 import pandas as pd
@@ -160,6 +160,28 @@ def _seq_palette_fill(top_levels, pal, x, y, stat):
     return {lv: ramp[i] for lv, i in zip(top_levels, idx)}
 
 
+def hier_color_resolve_byfac(top_levels, fill, x, y, stat, facet,
+                             facet_order):
+    """Per-panel fills for a faceted chart: with a named sequential
+    palette, each panel's categories take their shades from that
+    panel's own counts (or stat of y), so each panel spans the
+    palette; None for any other fill, which every panel shares.
+    R analog: the fill_vec_byfac branch of .hier_color_resolve()"""
+    if not (isinstance(fill, str) and fill.lower() in _SEQ_NAMES):
+        return None
+    fac = facet.astype(str)
+    out = {}
+    for lv in facet_order:
+        m = (fac == str(lv)).to_numpy()
+        present = set(x[m].astype(str))
+        tops = [t for t in top_levels if str(t) in present]
+        if tops:
+            out[str(lv)] = _seq_palette_fill(
+                tops, fill.lower(), x[m].astype(str),
+                None if y is None else y[m], stat)
+    return out
+
+
 def hier_color_resolve(top_levels, fill=None, x=None, y=None,
                        stat=None):
     """Hex color per top-level category, inherited down the tree.
@@ -183,7 +205,7 @@ def hier_color_resolve(top_levels, fill=None, x=None, y=None,
             for i, lv in enumerate(top_levels)}
 
 
-def hier_plotly(agg, fill_vec, type="sunburst",
+def hier_plotly(agg, fill_vec, type="sunburst", fill_vec_byfac=None,
                 x_name="X", by_name=None, facet_name=None,
                 main=None, border=None, digits_d=None,
                 labels=None, labels_color="white",
@@ -254,8 +276,9 @@ def hier_plotly(agg, fill_vec, type="sunburst",
     if texttemplate is not None:
         kw["texttemplate"] = texttemplate
 
-    def make_trace(nd_i, dom_x, dom_y):
-        node_cols = [fill_vec.get(r, list(fill_vec.values())[0])
+    def make_trace(nd_i, dom_x, dom_y, cols=None):
+        cols = fill_vec if not cols else cols
+        node_cols = [cols.get(r, list(cols.values())[0])
                      for r in nd_i["root"]]
         return trace_cls(
             ids=nd_i["ids"],
@@ -334,8 +357,9 @@ def hier_plotly(agg, fill_vec, type="sunburst",
         for i, lv in enumerate(fac_levels):
             nd_i = nd_byfac[lv]
             if nd_i["ids"]:
-                fig.add_trace(make_trace(nd_i, domains[i]["x"],
-                                         domains[i]["y"]))
+                fig.add_trace(make_trace(
+                    nd_i, domains[i]["x"], domains[i]["y"],
+                    cols=(fill_vec_byfac or {}).get(str(lv))))
 
         t_margin = round(title_size * 2.8)
         fig.update_layout(

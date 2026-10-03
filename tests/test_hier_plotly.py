@@ -116,3 +116,25 @@ def test_hier_nested_by_list(capsys):
     tr = Chart("Dept", by=["Gender", "Plan"], data=emp, form="pie",
                quiet=True).data[0]
     assert tr.type == "sunburst" and len(tr.ids) == 33
+
+
+def test_hier_fill_palette_per_facet_panel():
+    # with facet=, each panel reads its shades off the named
+    # palette by its own values; hex values are R's (lessR, Oct
+    # 2026 fix) Chart(Dept, form="treemap", fill="greens",
+    # facet=Gender) on Employee
+    from lessPy import read_data
+    emp = read_data("Employee")
+    fig = Chart("Dept", data=emp, form="treemap", fill="greens",
+                facet="Gender", quiet=True)
+    got = [dict(zip(t.labels, t.marker.colors)) for t in fig.data]
+    assert got == [
+        {"ACCT": "#B3DBA7", "ADMN": "#B3DBA7", "FINC": "#97C389",
+         "MKTG": "#CFF2C4", "SALE": "#003200"},
+        {"ACCT": "#548C3B", "ADMN": "#095E00", "FINC": "#CFF2C4",
+         "MKTG": "#003200", "SALE": "#003200"}]
+    # a fill that is not a palette name stays the same in every panel
+    fig = Chart("Dept", data=emp, form="treemap", facet="Gender",
+                quiet=True)
+    a, b = (dict(zip(t.labels, t.marker.colors)) for t in fig.data)
+    assert a == b

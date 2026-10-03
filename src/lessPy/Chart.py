@@ -35,7 +35,8 @@ from .plt_add import plt_add
 from .bubble_plotly import bubble_plotly
 from .dot_plotly import dot_plotly
 from .hier_plotly import (
-    hier_aggregate, hier_color_resolve, hier_plotly,
+    hier_aggregate, hier_color_resolve, hier_color_resolve_byfac,
+    hier_plotly,
 )
 from .pie_plotly import pie_plotly
 from .plt_plotly import plt_plotly
@@ -962,6 +963,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
                              facet_order=facet_order)
         fill_vec = hier_color_resolve(x_order, fill, x=x_ser,
                                       y=y_ser, stat=stat)
+        fill_vec_byfac = (None if facet_ser is None else
+                          hier_color_resolve_byfac(
+                              x_order, fill, x_ser, y_ser, stat,
+                              facet_ser, facet_order))
         if main is None:
             main = build_title(x, by_name=by_label, y_name=y,
                                stat=stat, facet_name=facet_name)
@@ -974,6 +979,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         # keep the inner rings meaningful.
         return hier_plotly(
             agg, fill_vec, type=hier_type,
+            fill_vec_byfac=fill_vec_byfac,
             x_name=x, by_name=by, facet_name=facet_name,
             main=main, border=color, digits_d=digits_d,
             labels="%" if labels is None else labels,

@@ -1046,3 +1046,15 @@ for visual output (Cars93).
           multi-item chart keeps R's 0.04 default. segments= is the
           profile's on/off for its joining lines (unfaceted and
           faceted); raises on other forms naming segments_x/_y.
+
+40. **Post-0.2.0** (October 2026).
+    - [x] faceted treemap/icicle/sunburst with a named sequential
+          palette: each panel reads its shades off the palette by
+          its own values (hier_color_resolve_byfac ->
+          hier_plotly(fill_vec_byfac=)), matching the lessR fix of
+          Oct 2026 to .hier_color_resolve's per-facet branch (R had
+          used the theme's hue, so fill="greens" drew blue panels).
+          Hex-identical to R for counts and stat="mean". Other
+          fills are still shared by every panel; the theme-driven
+          per-panel remap (.scale.clr) remains unported.
+
