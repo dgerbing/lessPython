@@ -506,7 +506,7 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
                     n_col=1, axis_fmt="K", axis_x_pre="",
                     rotate_x=0, rotate_y=0,
                     by_tbls=None, by_name=None, beside=False,
-                    val_name=None, legend_title=None,
+                    val_name=None, legend_title=None, horiz=True,
                     style_opts=None):
     """Faceted bar chart: one panel per facet level, on a shared
     value axis with horizontal bars, as in the lattice Trellis bar
@@ -586,7 +586,8 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
                  f"<br>{facet_name}: {lv}")
                 for cc, v in zip(cats, row)]
             fig.add_trace(go.Bar(
-                x=row, y=cats, orientation="h",
+                x=row if horiz else cats, y=cats if horiz else row,
+                orientation="h" if horiz else "v",
                 marker=dict(color=fill_vec, opacity=alpha_fill,
                             line=dict(color=border_vec, width=1)),
                 hoverinfo="text", hovertext=hover,
@@ -604,15 +605,24 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
                  f"<br>{facet_name}: {lv}")
                 for cc, v in zip(cats, vals)]
             fig.add_trace(go.Bar(
-                x=vals, y=cats, orientation="h", name=b,
+                x=vals if horiz else cats, y=cats if horiz else vals,
+                orientation="h" if horiz else "v", name=b,
                 legendgroup=b, showlegend=(i == 0),
                 marker=dict(color=clr, opacity=alpha_fill,
                             line=dict(color=brd, width=1)),
                 hoverinfo="text", hovertext=hover,
             ), row=r, col=c)
 
-    finish_facet(fig, fac_levels, ax, x_lab, y_lab, gridT1=axT1,
-                 style_opts=style_opts, y_cat=cats, n_col=n_col)
+    if horiz:
+        finish_facet(fig, fac_levels, ax, x_lab, y_lab, gridT1=axT1,
+                     style_opts=style_opts, y_cat=cats, n_col=n_col)
+    else:
+        # the vertical chart: categories along x, the shared value
+        #   scale up the side of every panel
+        finish_facet(fig, fac_levels,
+                     {"axT2": axT1, "axL2": ax["axL1"]},
+                     y_lab, x_lab, gridT1=None, style_opts=style_opts,
+                     n_col=n_col, x_cat=cats)
     if grouped:
         fig.update_layout(
             barmode="group" if beside else "stack",
@@ -621,7 +631,10 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
                                          if legend_title is not None
                                          else by_name)),
                         traceorder="normal"))
-    fig.update_xaxes(range=[axT1[0], axT1[-1]])   # includes zero
+    if horiz:
+        fig.update_xaxes(range=[axT1[0], axT1[-1]])   # includes zero
+    else:
+        fig.update_yaxes(range=[axT1[0], axT1[-1]])
     if rotate_x:
         fig.update_xaxes(tickangle=-rotate_x)
     if rotate_y:

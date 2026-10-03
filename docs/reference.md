@@ -111,7 +111,11 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   (`Chart(['m01', 'm02', 'm03'], data=d)`), draws the multi-item
   stacked chart: one bar per item divided into its responses in a
   divergent palette, ordered by the mean response, with the
-  frequencies and means at the console; `facet=` panels it. Numeric bars can be colored by value:
+  frequencies and means at the console; `facet=` panels it,
+  `horiz=False` stands the bars upright, and `form="bubble"` draws
+  the bubble plot frequency matrix. With `one_plot=False`, or when
+  the variables share no response scale, each categorical variable
+  is its own bar chart, a panel of one figure. Numeric bars can be colored by value:
   `fill_split=v` (two colors split at `v`) or `fill_scaled=True`
   (an HCL gradient by distance from the split). `theme=` (green,
   slatered, sienna, blue, …) fills with a sequential palette in the

@@ -1057,4 +1057,56 @@ for visual output (Cars93).
           Hex-identical to R for counts and stat="mean". Other
           fills are still shared by every panel; the theme-driven
           per-panel remap (.scale.clr) remains unported.
+    - [x] bar colors to lessR (15 golden cases, tests/test_chart_
+          colors.py, all hex-identical): fill= a palette name
+          ("reds", "viridis", ...) expands to one color per bar or
+          by level (crashed before); theme= without by draws every
+          bar in the theme's bar_fill_discrete (_THEME_BAR_FILL),
+          with by the levels span the theme's palette reversed
+          (lessR fixed Oct 2026 to do so for every sequential
+          theme; it had taken the first levels of a max(n_x, n_by)
+          ramp for all but gray/white); fill_scaled takes the theme's hue
+          (.get.h; was hard-coded 255) at constant chroma, or one
+          fill color's hue and chroma (was scaled), and under a
+          theme starts from the theme's bar color. Supporting
+          ports: getColors viridis family = grDevices hcl.colors()
+          exactly (sequential + divergingx; was plotly's scales,
+          20/20 R-identical), _color_hc = R .getHC via convertColor
+          with R's D65 (0.3137, 0.3291), R's full colors() table
+          (rcolors.py) behind to_hex.
+    - [x] stat_x="proportion" with by= (user's call, Oct 2026): the
+          bar chart is the 100% stacked chart, within each bar (R's
+          .bc.main prop -> stack100); the faceted bar takes every
+          cell as a share of its panel (lattice prop.table); dot,
+          profile, radar, bubble take each by level's distribution
+          over x (each series sums to 1), within each panel when
+          faceted. lessR ignored stat_x on those four forms (even
+          without by) and was fixed to the same semantics; values
+          identical in both packages on 8 cases. Bubble "%" labels
+          of proportions are the values themselves (shares=), not a
+          share of the table total.
+    - [x] vertical multi-item chart (horiz=False): items left to
+          right by ascending mean (R's sort.miss "+"), same labels
+          and legend; faceted vertical through bc_facet_plotly
+          (horiz=False) with finish_facet(x_cat=), items in the
+          order given. Ticks follow pretty() (R base trims to 350).
+    - [x] multi-item bubble matrix (Chart([...], form="bubble"),
+          R's .dpmat.main BPFM): items as rows (first at the
+          bottom, sort by mean when given), responses as columns,
+          one translucent bar_fill_cont color, counts labeled only
+          above power/2.5 * max (bubble_plotly label_min_value);
+          console table with Sum and Mean identical to R on Mach4
+          (lessPy adds the title; lessR's was stored as txout_title
+          and never printed - fixed in lessR Oct 2026).
+    - [x] one_plot= (user's call, Oct 2026: one figure, a panel per
+          variable): one_plot=False, or by default items that share
+          no response set, draws one bar chart of counts per
+          categorical variable as panels of a single Figure (up to
+          3 columns), each followed at the console by its 1-D
+          frequencies and chi-square (identical to R). As R's
+          bc.data.frame(): numeric variables passed over (R's
+          .is.num.cat(x, 0) is never TRUE), ID-like and one-valued
+          variables skipped; none left raises R's "No categorical
+          variables" advice (pandas Categorical). facet refused with
+          R's reason. one_plot=True on unshared items raises.
 

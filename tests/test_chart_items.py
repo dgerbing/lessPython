@@ -69,7 +69,67 @@ def test_items_facet(lik, capsys):
 def test_items_refusals(lik):
     with pytest.raises(ValueError, match="facet"):
         Chart(["q1", "q2"], by="Grp", data=lik)
-    with pytest.raises(ValueError, match="share"):
-        Chart(["q1", "Grp"], data=lik)
+    # no shared response set: a chart per variable, as R; the
+    # numeric item is passed over, the categorical one charted
+    fig = Chart(["q1", "Grp"], data=lik, quiet=True)
+    assert [a.text for a in fig.layout.annotations] == ["Grp"]
+    with pytest.raises(ValueError, match="cannot be stacked|share"):
+        Chart(["q1", "Grp"], one_plot=True, data=lik)
     with pytest.raises(ValueError, match="y and stat"):
         Chart(["q1", "q2"], y="q3", data=lik)
+
+
+def test_items_vertical(lik):
+    # horiz=False: the items left to right, ascending mean
+    fig = Chart(["q1", "q2", "q3"], horiz=False, data=lik, quiet=True)
+    means = lik[["q1", "q2", "q3"]].mean()
+    assert list(fig.layout.xaxis.categoryarray) == \
+        list(means.sort_values().index)
+    assert all(t.orientation == "v" for t in fig.data)
+    # faceted vertical: the items in the order given, left to right
+    fig = Chart(["q1", "q2", "q3"], horiz=False, facet="Grp",
+                data=lik, quiet=True)
+    assert list(fig.data[0].x) == ["q1", "q2", "q3"]
+
+
+def test_items_bubble_matrix(lik, capsys):
+    # the bubble plot frequency matrix: rows are items (first at the
+    # bottom), columns responses; counts at most power/2.5 * max are
+    # left unlabeled, as R's .dpmat.main()
+    fig = Chart(["q1", "q2", "q3"], form="bubble", data=lik)
+    out = capsys.readouterr().out
+    assert "Sum" in out and "Mean" in out
+    rows = [t.y[0] for t in fig.data]
+    assert rows == ["q3", "q2", "q1"]       # plotly lists top first
+    cnt = lik["q1"].value_counts().reindex([1, 2, 3, 4, 5],
+                                           fill_value=0)
+    allmax = max(lik[q].value_counts().max() for q in ("q1", "q2", "q3"))
+    q1 = [t for t in fig.data if t.y[0] == "q1"][0]
+    for c, txt in zip(cnt, q1.text):
+        assert txt == ("" if c <= 0.2 * allmax else str(c))
+
+
+def test_one_plot_false_panels(capsys):
+    # one bar chart per categorical variable, as panels of one figure;
+    # numeric variables are passed over, as R's bc.data.frame() does
+    from lessPy import read_data
+    emp = read_data("Employee")
+    fig = Chart(["Gender", "Dept", "Plan", "Salary"], one_plot=False,
+                data=emp)
+    assert [a.text for a in fig.layout.annotations] == ["Gender", "Dept"]
+    out = capsys.readouterr().out
+    assert "--- Gender ---" in out and "--- Dept ---" in out
+    assert "Chisq = 10.944, df = 4, p-value = 0.027" in out   # R
+    with pytest.raises(ValueError, match="No categorical"):
+        Chart(["Plan", "Salary"], one_plot=False, data=emp)
+    with pytest.raises(ValueError, match="no panels"):
+        Chart(["Gender", "Dept"], one_plot=False, facet="Plan",
+              data=emp)
+
+
+def test_one_plot_default_from_shared_responses():
+    # items without one shared response set are charted one by one
+    from lessPy import read_data
+    emp = read_data("Employee")
+    fig = Chart(["Gender", "Dept"], data=emp, quiet=True)
+    assert len(fig.layout.annotations) == 2

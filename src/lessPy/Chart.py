@@ -63,6 +63,36 @@ _THEME_PALETTE = {
 }
 
 
+# each theme's single bar color, a bar chart without by drawn in it
+#   (R: style(theme)$bar$bar_fill_discrete, alpha from trans_bar_fill)
+_THEME_BAR_FILL = {
+    "lightbronze": "#7B8C96", "dodgerblue": "#1874CDE6",
+    "darkred": "#8B0000E6", "gray": "#595959E6", "gold": "#CD9B1DE6",
+    "darkgreen": "#006400E6", "blue": "#4876FFE6", "red": "#CD2626E6",
+    "rose": "#CD9B9BE6", "green": "#006400E6", "purple": "#9B30FFE6",
+    "sienna": "#CD6839E6", "brown": "#8B6969E6", "orange": "#FFA500E6",
+    "white": "#FFFFFFE6", "slatered": "#A35763E6",
+}
+
+
+def _color_range(pal, n):
+    """n colors of a named palette, alpha dropped. Two grays are set
+    further apart than the palette spaces them, gray60 and gray30,
+    as in R. R analog: .color_range()"""
+    from .getColors import getColors
+    if pal == "grays" and n == 2:
+        return ["#999999", "#4D4D4D"]
+    cols = getColors(pal, n=max(1, n), quiet=True)
+    return [c[:7] if len(c) == 9 and c.endswith("FF") else c
+            for c in cols]
+
+
+def _palette_names():
+    from .getColors import _SEQ_NAMES, _VIRIDIS
+    return set(_SEQ_NAMES) | set(_VIRIDIS) | {
+        "hues", "Okabe-Ito", "Tableau", "distinct"}
+
+
 def _theme_fill(theme, n):
     """A theme's fill: an n-color sequential palette in the theme's
     hue. R analog: the theme branch of the fill assignment."""
@@ -81,9 +111,10 @@ def _facet_table(x_s, y_s, by_s, stat, is_agg, x_order, by_order,
     """Frequency or stat table for one facet level, on the global
     category set(s) so panels stay aligned; absent cells fill 0,
     as in R's xtabs. Series without by, DataFrame (by x cats)
-    with. proportion normalizes the per-panel counts (no y, no by)
-    to sum to 1, the faceted stat_x="proportion". Used by the
-    faceted radar and bubble paths."""
+    with. proportion normalizes the per-panel counts to sum to 1,
+    the faceted stat_x="proportion": the whole panel without by,
+    each by row with it. Used by the faceted radar and bubble
+    paths."""
     if by_s is None:
         if y_s is None:
             t = x_s.groupby(x_s, observed=True).size() \
@@ -109,8 +140,12 @@ def _facet_table(x_s, y_s, by_s, stat, is_agg, x_order, by_order,
         t = STAT_FUN[stat](
             df.groupby(["by", "x"], observed=True)["y"]
         ).unstack("x")
-    return (t.reindex(index=by_order, columns=x_order)
-            .fillna(0))
+    t = t.reindex(index=by_order, columns=x_order).fillna(0)
+    if proportion and y_s is None:
+        # each group's distribution over x: every by row sums to 1
+        tot = t.sum(axis=1)
+        t = t.div(tot.where(tot != 0), axis=0).fillna(0)
+    return t
 
 _FORMS = ("bar", "radar", "bubble", "dot", "pie", "icicle", "treemap",
           "profile")
@@ -171,7 +206,7 @@ def _dot_origin_grid(vals, origin_in=None, is_counts=None):
 def _chart_items(data, items, y, by, facet, form, stat, sort,
                  sort_miss, stack100, horiz, fill, theme, labels,
                  labels_size, gap, labels_cut, xlab, ylab, main,
-                 legend_title,
+                 legend_title, power, radius, one_plot,
                  n_col, n_row, axis_fmt, axis_x_pre, rotate_x,
                  rotate_y, quiet):
     """The multi-item stacked chart and its faceted form. R analog:
@@ -186,22 +221,73 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
     if facet is not None and form != "bar":
         raise ValueError(
             'facet with multiple x variables requires form="bar"')
-    if form == "bubble":
-        raise NotImplementedError(
-            "the bubble plot frequency matrix of multiple x "
-            'variables is not yet ported; use form="bar"')
-    if form != "bar":
+    if form not in ("bar", "bubble"):
         raise ValueError(
             'Multiple x variables only available for form="bar"')
     if y is not None or stat is not None:
         raise ValueError(
             "A multi-item chart counts the responses to each item, "
             "so y and stat do not apply")
-    if not horiz:
-        raise NotImplementedError(
-            "the vertical multi-item chart is not yet ported")
     cols = [_get_column(data, it, "x") for it in items]
+
+    # one_plot: the items compose one chart when they share one set of
+    #   responses, decided from the data unless given; otherwise each
+    #   variable is its own bar chart. R analog: Chart.R one_plot test
+    sets = [set(c.dropna().unique()) for c in cols]
+    widest = max(sets, key=len)
+    shared = not any(st - widest for st in sets)
+    if one_plot is None:
+        one_plot = shared
+    if not one_plot:
+        if facet is not None:
+            raise ValueError(
+                "facet requires the multi-item stacked chart, which "
+                "needs the x variables to share the same response "
+                "categories: a separate chart per variable is not a "
+                "single composition, so there are no panels to "
+                "condition")
+        if form != "bar":
+            raise ValueError(
+                'A separate chart per variable is a bar chart, so it '
+                'needs form="bar"')
+        return _chart_per_variable(data, items, cols, fill, xlab,
+                                   main, quiet)
+
     frq, wm, numeric = items_table(cols, items)
+
+    if form == "bubble":
+        # the bubble plot frequency matrix: one row of bubbles per
+        #   item, one column per response, each bubble sized by its
+        #   count, the items in the order given from the bottom unless
+        #   sorted by their mean. R analog: .dpmat.main()
+        order = list(items)
+        if sort != "0":
+            order = list(wm.sort_values(ascending=(sort == "+"),
+                                        kind="stable").index)
+        if not resolve_quiet(quiet):
+            print("\n".join(items_stats_lines(
+                frq[order], wm[order],
+                "Frequencies of Responses by Variable", numeric,
+                with_sum=True)))
+        # the matrix lists its first row at the top, so reverse the
+        #   order to draw the first item at the bottom, as R does
+        mat = frq[order[::-1]].T.astype(float)
+        mat.index.name, mat.columns.name = "Item", "Response"
+        cut = power / 2.5 * float(np.nanmax(mat.to_numpy()))
+        if fill is None:
+            fill = get_option("bar_fill_cont", "#96AAC3")
+        return bubble_plotly(
+            mat, x_name="Response", y_name="Count", by_name="Item",
+            x_lab="" if xlab is None else xlab,
+            y_lab="" if ylab is None else ylab,
+            main=main or None,
+            fill=(list(fill)[::-1] if isinstance(fill, (list, tuple))
+                  else [fill] * len(order)),
+            border=get_option("pt_color", "#324E5C"),
+            opacity=0.6, power=power, radius=radius, digits_d=0,
+            labels="input" if labels is None else labels,
+            labels_color=get_option("bubble_text_color", "#F7F2E6"),
+            label_min_value=cut)
     fill_use = (fill if isinstance(fill, (list, tuple))
                 else [fill] * len(frq.index) if fill is not None
                 else items_fill(theme, len(frq.index)))
@@ -231,7 +317,7 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
             y_lab="" if ylab is None else ylab,
             legend_title=leg, main=main or None,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
-            rotate_x=rotate_x, rotate_y=rotate_y)
+            rotate_x=rotate_x, rotate_y=rotate_y, horiz=horiz)
 
     # faceted: a panel is a fraction of the width of the single
     #   chart, too narrow for segment labels, and the paneled chart
@@ -280,7 +366,8 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
         if stack100:
             tot = t.sum(axis=0)
             t = t.div(tot.where(tot != 0), axis=1).fillna(0)
-        tbls[lv] = t[items[::-1]]       # first item at the top
+        # first item at the top, or at the left of a vertical chart
+        tbls[lv] = t[items[::-1]] if horiz else t[items]
     tbl = pd.DataFrame([tbls[lv].sum(axis=0) for lv in facet_order],
                        index=facet_order)
     tbl.index.name = facet_name
@@ -297,7 +384,81 @@ def _chart_items(data, items, y, by, facet, form, stat, sort,
         rotate_x=rotate_x, rotate_y=rotate_y, main=main,
         by_tbls=tbls, by_name=leg, beside=False,
         val_name=("Proportion" if stack100 else "Count"),
-        legend_title=leg)
+        legend_title=leg, horiz=horiz)
+
+
+def _chart_per_variable(data, items, cols, fill, xlab, main, quiet):
+    """One bar chart of counts per categorical variable, as panels of
+    one figure, each followed at the console by its frequencies and
+    chi-square test. Numeric variables are passed over, as are a
+    variable that identifies each case and one with a single value.
+    R analog: bc.data.frame()"""
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
+    from .plotly_utils import (BASE_COLORS, auto_text_color,
+                               axis_format, plotly_style, to_hex)
+    from .stats_out import _counts_1d
+    show = not resolve_quiet(quiet)
+    keep = []
+    for nm, c in zip(items, cols):
+        if is_numeric_dtype(c) and not isinstance(
+                c.dtype, pd.CategoricalDtype):
+            continue                     # R: .is.num.cat(x, 0) FALSE
+        v = c.dropna()
+        if v.nunique() >= len(v):        # identifies each case
+            continue
+        if v.nunique() == 1:
+            if show:
+                print(f"\nVariable {nm} has only one value.\n"
+                      " No bar chart produced.\n")
+            continue
+        keep.append((nm, c))
+    if not keep:
+        raise ValueError(
+            "No categorical variables, so no bar charts.\n\n"
+            "If you have integer variables that are categorical, "
+            "convert them to pandas Categorical, e.g.\n"
+            "  d['Plan'] = d['Plan'].astype('category')")
+
+    n = len(keep)
+    n_col = min(3, n)
+    n_row = math.ceil(n / n_col)
+    fig = make_subplots(rows=n_row, cols=n_col,
+                        subplot_titles=[nm for nm, _ in keep],
+                        horizontal_spacing=0.08,
+                        vertical_spacing=max(0.08, 0.3 / n_row))
+    st = plotly_style()
+    for k, (nm, c) in enumerate(keep):
+        if show:
+            print("\n".join(_counts_1d(c.dropna(), nm,
+                                       int(c.isna().sum()))) + "\n")
+        order = _category_order(c.dropna())
+        cnt = c.value_counts().reindex(order, fill_value=0)
+        f = (fill if isinstance(fill, (list, tuple))
+             else [fill] if fill is not None else BASE_COLORS)
+        cols_k = [to_hex(f[i % len(f)]) for i in range(len(cnt))]
+        r, cc = k // n_col + 1, k % n_col + 1
+        fig.add_trace(go.Bar(
+            x=[str(v) for v in cnt.index], y=cnt.to_numpy(),
+            marker=dict(color=cols_k), text=[str(v) for v in cnt],
+            textposition="inside", showlegend=False,
+            textfont=dict(color=auto_text_color(cols_k)),
+            hovertemplate=f"{nm}: %{{x}}<br>Count: %{{y}}"
+                          "<extra></extra>"), row=r, col=cc)
+        ticks = pretty(0.0, float(cnt.max()))
+        fig.update_yaxes(row=r, col=cc, tickvals=ticks,
+                         ticktext=axis_format(ticks, 0),
+                         range=[0, ticks[-1] * 1.04],
+                         gridcolor="#E5E5E5",
+                         title_text="Count" if cc == 1 else "")
+        fig.update_xaxes(row=r, col=cc, type="category",
+                         title_text=xlab or "")
+    fig.update_layout(
+        template=None, height=140 + 260 * n_row,
+        plot_bgcolor=to_hex(st["panel_fill"]),
+        paper_bgcolor=to_hex(st["window_fill"]),
+        title=(dict(text=main, x=0.5) if main else None))
+    return fig
 
 
 def _items_print(frq, wm, numeric, title=None):
@@ -397,7 +558,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
           theme=None,
           labels=None, labels_position=None,
           labels_color=None, labels_size=None, labels_decimals=None,
-          labels_cut=None, segments=None,
+          labels_cut=None, segments=None, one_plot=None,
           legend_title=None, legend_position=None,
           legend_labels=None, legend_horiz=False,
           legend_size=None, legend_abbrev=None, legend_adjust=0,
@@ -567,6 +728,13 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         raise ValueError('labels_position must be "in" or "out"')
     if axis_fmt not in ("K", ",", ".", ""):
         raise ValueError('axis_fmt must be "K", ",", "." or ""')
+    # proportions of a bar chart with by are taken within each bar,
+    #   the 100% stacked chart. R analog: .bc.main()
+    #   if (!is.null(by) && prop) stack100 <- TRUE
+    if (stat_x == "proportion" and by is not None and form == "bar"
+            and facet is None and y is None):
+        stack100 = True
+        stat_x = "count"
     if stack100:
         if form != "bar":
             raise ValueError('stack100 rescales the bars of a bar '
@@ -663,9 +831,6 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             if sort != "0":
                 raise ValueError("Sort not applicable to Trellis "
                                  "(faceted bar) charts")
-            if stat_x == "proportion" and by is not None:
-                raise NotImplementedError(
-                    'stat_x="proportion" with by= is not yet ported')
 
     # ----- resolve variables and filter ---------------------------
     if filter is not None:
@@ -693,7 +858,8 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             stat=stat, sort=sort, sort_miss=sort_miss,
             stack100=stack100, horiz=horiz, fill=fill, theme=theme,
             labels=labels, labels_size=labels_size, gap=gap,
-            labels_cut=labels_cut,
+            labels_cut=labels_cut, power=power, radius=radius,
+            one_plot=one_plot,
             xlab=xlab, ylab=ylab, main=main,
             legend_title=legend_title, n_col=n_col, n_row=n_row,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
@@ -815,12 +981,33 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     facet_order = (_category_order(facet_ser)
                    if facet_ser is not None else None)
 
-    # theme=: a sequential palette in the theme's hue over the fill
-    # elements (the by groups if present, else the x categories)
-    if theme is not None and fill is None:
-        n_fill = len(by_order) if by_order is not None \
-            else len(x_order)
-        fill = _theme_fill(theme, n_fill)
+    # theme=: a bar chart without by is drawn in the theme's single
+    #   bar color, which fill_scaled then varies in luminance; with
+    #   by, the levels span the theme's sequential palette, darkest
+    #   first. The default theme keeps the qualitative hues.
+    #   R analog: Chart.R fill block (theme.seq) and .bc.main()
+    if (theme is not None and fill is None
+            and theme not in ("colors", "hues")):
+        if theme not in _THEME_PALETTE:
+            raise ValueError(
+                f"unknown theme '{theme}'; one of: "
+                f"{', '.join(sorted(_THEME_PALETTE))}")
+        if by_order is not None:
+            fill = list(reversed(_color_range(_THEME_PALETTE[theme],
+                                              len(by_order))))
+        elif form == "bar":
+            fill = [_THEME_BAR_FILL.get(theme, "#595959E6")] \
+                * len(x_order)
+        else:
+            fill = _theme_fill(theme, len(x_order))
+
+    # a palette name in fill, such as "reds", names a range of colors,
+    #   one per bar, or per level of by. R analog: .bc.main()
+    #   .color_range(fill, n.levels)
+    if (form == "bar" and isinstance(fill, str) and not fill_scaled
+            and fill in _palette_names()):
+        fill = _color_range(fill, len(by_order) if by_order is not None
+                            else len(x_order))
 
     # explicit panel-grid layout: n_col wins, else derive from
     # n_row; None keeps each renderer's own default (single-column
@@ -1027,6 +1214,11 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
                                        columns=x_order)
             if y_ser is None:
                 t = t.fillna(0)
+                if stat_x == "proportion" and not stack100:
+                    # every cell of the panel as a share of the panel,
+                    #   as lattice's prop.table(margin=panel)
+                    tot = t.to_numpy().sum()
+                    t = t / tot if tot > 0 else t
             if stack100:
                 # each bar scaled to its own total compares
                 #   composition rather than magnitude
@@ -1054,7 +1246,9 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         elif y_ser is not None:
             val_name = y
         elif by_ser is not None:
-            val_name = "Count"
+            # named for x, as lattice's "Count of" / "Proportion of"
+            val_name = ("Proportion of " if stat_x == "proportion"
+                        else "Count of ") + x
         else:
             val_name = None             # Count/Proportion of x
         return bc_facet_plotly(
@@ -1076,9 +1270,6 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         )
 
     if facet_ser is not None and form == "radar":
-        if stat_x == "proportion" and by_ser is not None:
-            raise NotImplementedError(
-                'stat_x="proportion" with by= is not yet ported')
         facets = {
             str(lv): _facet_table(
                 x_ser[facet_ser == lv],
@@ -1180,6 +1371,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         g = df.groupby(["f", "g", "x"], observed=True)["y"]
         t = (g.sum() if y_ser is None
              else STAT_FUN[stat](g) if agg_y else g.mean())
+        if y_ser is None and stat_x == "proportion":
+            # each series is its group's distribution over x in that
+            #   panel; without by, the panel's own distribution
+            t = t / t.groupby(level=["f", "g"]).transform("sum")
         cells = {}
         for (f, gg, xx), v in t.items():
             nm = None if by_ser is None else gg
@@ -1200,8 +1395,12 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             digits_d = 0 if y_ser is None else 2
         from .plotly_utils import axis_format
         y_lab = (ylab if ylab is not None
+                 else f"Proportion of {x}" if (y_ser is None
+                                               and stat_x == "proportion")
                  else "Count" if y_ser is None
                  else f"{STAT_LBL[stat]} of {y}" if agg_y else y)
+        if y_ser is None and stat_x == "proportion" and digits_d == 0:
+            digits_d = 2
         return profile_facet_plotly(
             cells, x_lv, series, y_tick,
             axis_format(y_tick, digits_d, axis_fmt, axis_y_pre),
@@ -1226,9 +1425,6 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         agg_y = not is_agg and stat is not None
         cats_l, vals_l, fac_l = [], [], []
         if by_ser is not None:
-            if prop:
-                raise ValueError(
-                    'stat_x="proportion" with by= is not yet ported')
             rows = []
             for lv in facet_order:
                 m = facet_ser == lv
@@ -1242,6 +1438,10 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
                 wide = (t.unstack("by")
                         .reindex(index=[str(c) for c in x_order],
                                  columns=[str(b) for b in by_order]))
+                if prop and y_ser is None:
+                    # each group's distribution over x in this panel
+                    tot = wide.sum(axis=0)
+                    wide = wide.div(tot.where(tot != 0), axis=1)
                 rows.append(wide)
                 cats_l += list(wide.index)
                 fac_l += [str(lv)] * len(wide)
@@ -1272,8 +1472,8 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
         # an aggregated value is labeled by its statistic, as the
         #   unfaceted chart is: "Mean of Salary", not "Salary"
         if y_ser is None:
-            val_lab = ("Count" if by_ser is not None
-                       else f"Proportion of {x}" if prop
+            val_lab = (f"Proportion of {x}" if prop
+                       else "Count" if by_ser is not None
                        else f"Count of {x}")
         else:
             val_lab = f"{STAT_LBL[stat]} of {y}" if agg_y else y
@@ -1323,9 +1523,6 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
     # ----- build the table the renderer receives ------------------
     if y_ser is None:                        # counts of x
-        if stat_x == "proportion" and by_ser is not None:
-            raise NotImplementedError(
-                'stat_x="proportion" with by= is not yet ported')
 
         if by_ser is None:
             tbl = (x_ser.groupby(x_ser).size()
@@ -1345,11 +1542,20 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             tbl = pd.crosstab(by_ser, x_ser)
             tbl = tbl.reindex(index=by_order, columns=x_order,
                               fill_value=0)
-            y_name = "Count"
+            if stat_x == "proportion":
+                # each group's distribution over x, so the groups are
+                #   compared whatever their sizes: every by row sums
+                #   to 1 (the bar chart took its own path above, the
+                #   100% stacked chart within each bar)
+                tot = tbl.sum(axis=1)
+                tbl = tbl.div(tot.where(tot != 0), axis=0).fillna(0)
+                y_name = "Proportion"
+            else:
+                y_name = "Count"
             if ylab is None:
-                ylab = f"Count of {x}"
+                ylab = f"{y_name} of {x}"
             if digits_d is None:
-                digits_d = 0
+                digits_d = 0 if stat_x == "count" else 2
 
     elif stat == "deviation":                # R analog: .agg()
         if by_ser is not None:
@@ -1474,6 +1680,7 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             labels_decimals=labels_decimals,
             labels_size=0.90 if labels_size is None
                         else labels_size,
+            shares=(y_ser is None and stat_x == "proportion"),
         )
 
     if form == "radar":
@@ -1570,7 +1777,9 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
             ydf.columns = [str(c) for c in ydf.columns]
             cats = [str(c) for c in ydf.index]
             val_lab = (xlab if xlab else ylab_user if ylab_user
-                       else "Count" if y_ser is None else ylab)
+                       else ylab if (y_ser is not None
+                                     or stat_x == "proportion")
+                       else "Count")
             return _dot_paired(
                 cats, ydf.reset_index(drop=True), sort, sort_miss,
                 origin_x,
@@ -1656,8 +1865,16 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     if (fill_split is not None or fill_scaled) \
             and isinstance(tbl, pd.Series):
         from .getColors import bar_fill_colors
-        fill = bar_fill_colors(tbl.to_numpy(dtype=float), fill,
-                               fill_split, fill_scaled, fill_chroma)
+        # one fill repeated over the bars is a single color; more
+        #   than two leave the hue to the theme, as R's .bc.main()
+        f_in = fill
+        if isinstance(fill, (list, tuple)):
+            uniq = list(dict.fromkeys(fill))
+            f_in = (uniq[0] if len(uniq) == 1
+                    else None if len(uniq) > 2 else uniq)
+        fill = bar_fill_colors(tbl.to_numpy(dtype=float), f_in,
+                               fill_split, fill_scaled, fill_chroma,
+                               theme=theme)
 
     fig = bc_plotly(
         tbl,

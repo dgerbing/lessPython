@@ -454,16 +454,11 @@ def test_fill_scaled_rejects_by(d):
 
 
 def test_theme_sets_palette(d):
-    # theme= colors the bars with the theme's HCL palette family
-    fig = Chart("Dept", theme="green", data=d)
+    # lessR: a bar chart without by is drawn in the theme's single
+    # bar color (style(theme)$bar$bar_fill_discrete)
+    fig = Chart("Dept", theme="green", data=d, quiet=True)
     bar = [t for t in fig.data if t.type == "bar"][0]
-    cols = list(bar.marker.color)
-    # a sequential green palette: several distinct greenish fills
-    assert len(set(cols)) == len(d["Dept"].unique())
-    # greens: green channel dominant in the light end
-    r, g, b = int(cols[0][1:3], 16), int(cols[0][3:5], 16), \
-        int(cols[0][5:7], 16)
-    assert g > r and g > b
+    assert len(set(bar.marker.color)) == 1
 
 
 def test_theme_unknown_rejected(d):
@@ -824,3 +819,58 @@ def test_sub_subtitle(d):
     assert fig.layout.title.subtitle.text == "note"
     fig = X("Salary", data=d, sub="alone", quiet=True)
     assert fig.layout.title.text == "alone"
+
+
+# ----- stat_x="proportion" with by (Oct 2026) ---------------------
+
+def test_proportion_by_bar_is_stack100():
+    # lessR: proportions of a bar chart with by are within each bar
+    from lessPy import read_data
+    emp = read_data("Employee")
+    fig = Chart("Dept", by="Gender", stat_x="proportion", data=emp,
+                quiet=True)
+    m = [round(v, 3) for v in fig.data[0].y]
+    assert m == [0.4, 0.333, 0.75, 0.167, 0.667]        # R's values
+    assert fig.layout.yaxis.title.text == "Proportion within Dept"
+
+
+def test_proportion_by_series_forms_within_group():
+    # each by level's distribution over x: every series sums to 1
+    from lessPy import read_data
+    emp = read_data("Employee")
+    for form in ("profile", "radar"):
+        fig = Chart("Dept", by="Gender", stat_x="proportion", form=form,
+                    data=emp, quiet=True)
+        series = [t for t in fig.data if t.name in ("M", "W")
+                  and (getattr(t, "r", None) is not None
+                       or t.mode == "lines+markers")]
+        for t in series:
+            v = list(t.r)[:-1] if form == "radar" else list(t.y)
+            assert sum(v) == pytest.approx(1.0)
+    fig = Chart("Dept", by="Gender", stat_x="proportion", form="dot",
+                data=emp, quiet=True)
+    marks = [t for t in fig.data if t.mode == "markers"]
+    assert all(sum(t.x) == pytest.approx(1.0) for t in marks)
+    assert fig.layout.xaxis.title.text == "Proportion of Dept"
+    fig = Chart("Dept", by="Gender", stat_x="proportion",
+                form="bubble", data=emp, quiet=True)
+    txt = [t for t in fig.data if t.text is not None][0].text
+    assert txt[0] == "11%"                       # 2 of 18 men in ACCT
+
+
+def test_proportion_by_facet():
+    import numpy as np
+    from lessPy import read_data
+    emp = read_data("Employee")
+    # faceted bar: every cell of a panel as a share of the panel
+    fig = Chart("Dept", by="Gender", facet="Plan", stat_x="proportion",
+                data=emp, quiet=True)
+    for ax in ("x", "x2", "x3"):
+        tot = sum(np.nansum(t.x) for t in fig.data if t.xaxis == ax)
+        assert tot == pytest.approx(1.0)
+    # faceted profile: each group within each panel sums to 1
+    fig = Chart("Dept", by="Gender", facet="Plan", stat_x="proportion",
+                form="profile", data=emp, quiet=True)
+    for t in fig.data:
+        if len(t.y):
+            assert sum(t.y) == pytest.approx(1.0)

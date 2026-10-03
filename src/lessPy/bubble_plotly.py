@@ -63,6 +63,7 @@ def bubble_plotly(x=None, x_name=None, y_name=None, by_name=None,
                   labels_decimals=None,
                   label_min_px=26, label_autocontrast=True,
                   facet_tbls=None, facet_name=None, n_col=None,
+                  shares=False, label_min_value=None,
                   style_opts=None):
 
     if labels is None:
@@ -98,8 +99,11 @@ def bubble_plotly(x=None, x_name=None, y_name=None, by_name=None,
 
     # "prop" plots proportions, which digits_d (0 for counts)
     # would flatten to "0"
+    # a percentage of a proportion reads in whole numbers, as the
+    #   percentages of counts do
     lbl_d = (int(labels_decimals) if labels_decimals is not None
              else (2 if labels == "prop"
+                   else 0 if (shares and labels == "%")
                    else max(0, int(digits_d))))
     trace_mode = "markers" if labels == "off" else "markers+text"
     # None = the default (R's labels_position %||% "in")
@@ -377,6 +381,11 @@ def bubble_plotly(x=None, x_name=None, y_name=None, by_name=None,
 
     total = np.nansum(mat)
     share_tot = mat / total if total > 0 else np.zeros(mat.shape)
+    # values that are already proportions, each by group's distribution
+    #   over x, are their own percentages: a share of the table total
+    #   would divide them again by the number of groups
+    if shares:
+        share_tot = np.nan_to_num(mat)
     col_tot = np.nansum(mat, axis=0)
     with np.errstate(invalid="ignore", divide="ignore"):
         share_x = np.where(col_tot > 0, mat / col_tot, 0.0)
@@ -407,8 +416,14 @@ def bubble_plotly(x=None, x_name=None, y_name=None, by_name=None,
         else:
             txt = _label_text(row, share_tot[i], labels, digits_d,
                               lbl_d)
-            label_show = [t if np.isfinite(dp) and dp >= label_min_px
-                          else "" for t, dp in zip(txt, diam_px)]
+            # a bubble labels its value when it is large enough to hold
+            #   it; label_min_value states that as a value instead, as
+            #   R's bubble plot frequency matrix does (power/2.5 * max)
+            label_show = ([t if np.isfinite(v) and v > label_min_value
+                           else "" for t, v in zip(txt, row)]
+                          if label_min_value is not None else
+                          [t if np.isfinite(dp) and dp >= label_min_px
+                           else "" for t, dp in zip(txt, diam_px)])
         customdata = [dict(xcat=c, bycat=g, pct_x=float(px),
                            pct_tot=float(pt))
                       for c, px, pt in zip(cats, share_x[i],

@@ -151,20 +151,63 @@ def _rgb_to_hcl(r, g, b):
     return math.degrees(math.atan2(V, U)) % 360, math.hypot(U, V), L
 
 
+def _xy_to_xyz(x, y):
+    return (x / y, 1.0, (1 - x - y) / y)
+
+
+def _srgb_to_luv_matrix():
+    """R's make.rgb() for sRGB: primaries and the D65 white (x, y),
+    the matrix scaled so that white maps to white. R's white.points
+    table gives D65 as (0.3137, 0.3291), not the CIE (0.3127,
+    0.3290), so that is the white used, as convertColor() uses it."""
+    import numpy as np
+    prim = np.array([_xy_to_xyz(0.64, 0.33), _xy_to_xyz(0.30, 0.60),
+                     _xy_to_xyz(0.15, 0.06)]).T
+    white = np.array(_xy_to_xyz(0.3137, 0.3291))
+    scale = np.linalg.solve(prim, white)
+    return prim * scale, white
+
+
 def _color_hc(col):
-    h, c, _ = _rgb_to_hcl(*_to_rgb(col))
-    return h, c
+    """Hue and chroma of a color in CIE Luv, as R's .getHC() reads
+    them with grDevices::convertColor(from="sRGB", to="Luv")."""
+    import math
+    import numpy as np
+    r, g, b = (v / 255 for v in _to_rgb(col))
+    lin = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+           for v in (r, g, b)]
+    M, (Xn, Yn, Zn) = _srgb_to_luv_matrix()
+    X, Y, Z = M @ np.array(lin)
+    yr = Y / Yn
+    eps, kappa = 216 / 24389, 24389 / 27
+    L = 116 * yr ** (1 / 3) - 16 if yr > eps else kappa * yr
+    den, den_n = X + 15 * Y + 3 * Z, Xn + 15 * Yn + 3 * Zn
+    if den == 0:
+        return 0.0, 0.0
+    u = 13 * L * (4 * X / den - 4 * Xn / den_n)
+    v = 13 * L * (9 * Y / den - 9 * Yn / den_n)
+    return math.degrees(math.atan2(v, u)) % 360, math.hypot(u, v)
+
+
+# hue of each theme. R analog: .get.h()
+_THEME_HUE = {"gray": 0, "white": 0, "colors": 240, "lightbronze": 240,
+              "dodgerblue": 240, "blue": 240, "gold": 60, "brown": 60,
+              "sienna": 60, "orange": 30, "darkred": 0, "red": 0,
+              "rose": 0, "slatered": 0, "darkgreen": 120, "green": 120,
+              "purple": 300}
 
 
 def bar_fill_colors(values, fill, fill_split, fill_scaled,
-                    fill_chroma=75):
+                    fill_chroma=75, theme=None):
     """Per-bar fill colors for a numeric bar chart, keyed to the bar
     values. fill_split gives a two-color split at that value (below
     -> first color, above -> second). fill_scaled makes an HCL
     gradient: chroma and darkness rise with distance from the split
     (default 0), hue by side. A faithful approximation of R's
-    .scale.clr, not colorspace-exact. R analog: fill_split /
-    fill_scaled."""
+    .scale.clr: with no fill, the theme's hue at fill_chroma (gray
+    for the gray and white themes); with one fill color, that
+    color's hue and chroma, the luminance alone varying. R analog:
+    fill_split / fill_scaled, .scale.clr()"""
     import numpy as np
     from .plotly_utils import to_hex
     x = np.asarray(values, dtype=float)
@@ -184,12 +227,17 @@ def bar_fill_colors(values, fill, fill_split, fill_scaled,
     normed = dist / mx
     lum = 27 + (1 - normed) * 53           # near split light, far dark
 
-    if fills is None or len(fills) > 2:
-        h1 = h2 = 255.0
-        c1 = c2 = float(fill_chroma)
-    elif len(fills) == 1:
-        h1, c1 = _color_hc(fills[0])
-        h2, c2 = h1, c1
+    if fills is None or len(fills) > 2 or len(fills) == 1:
+        # one hue and chroma for every bar, only the luminance
+        #   following the value, as R's .scale.clr()
+        if fills is None or len(fills) > 2:
+            gray = theme in ("gray", "white")
+            hue = 0.0 if gray else float(_THEME_HUE.get(theme or
+                                                        "colors", 240))
+            chroma = 0.0 if gray else float(fill_chroma)
+        else:
+            hue, chroma = _color_hc(fills[0])
+        return [hcl(hue, chroma, L) for L in lum]
     else:
         h1, c1 = _color_hc(fills[0])
         h2, c2 = _color_hc(fills[1])
@@ -227,16 +275,73 @@ def _ramp(colors, n):
     return out
 
 
-def _viridis(name, n):
-    from plotly.colors import sample_colorscale
-    xs = [0.0] if n == 1 else [i / (n - 1) for i in range(n)]
-    cols = sample_colorscale(_VIRIDIS[name], xs, colortype="rgb")
+# grDevices .hcl_colors_parameters for the viridis family that lessR
+#   draws from hcl.colors(): type, h1 h2 h3, c1 c2 c3, l1 l2 l3,
+#   p1 p2 p3 p4, cmax1 cmax2 (None = NA)
+_HCL_PARAMS = {
+    "viridis": ("sequential", 300, 75, None, 40, 95, None, 15, 90,
+                None, 1.0, 1.1, None, None, None, None),
+    "plasma": ("sequential", -100, 100, None, 60, 100, None, 15, 95,
+               None, 2.0, 0.9, None, None, None, None),
+    "inferno": ("sequential", -100, 85, None, 0, 65, None, 1, 98,
+                None, 1.1, 0.9, None, None, 120, None),
+    "cividis": ("divergingx", 255, None, 75, 30, 0, 95, 13, 52, 92,
+                1.1, 1.0, 1, None, 47, None),
+    "spectral": ("divergingx", 0, 85, 270, 90, 45, 65, 37, 98, 37,
+                 1, 1.2, 1, 1.2, 120, None),
+}
+
+
+def _hcl_seq(i, h1, h2, c1, c2, l1, l2, p1, p2, cmax):
+    """grDevices hcl.colors() seqhcl: hue linear, chroma linear or
+    triangular through cmax, luminance by power."""
+    def lin(t, a, b):
+        return b - (b - a) * t
+    j = None
+    if cmax is not None:
+        try:
+            j = 1 / (1 + abs(cmax - c1) / abs(cmax - c2))
+        except ZeroDivisionError:
+            j = None
+        if j is not None and (j <= 0 or j >= 1):
+            j = None
     out = []
-    for c in cols:
-        r, g, b = (round(float(v)) for v in
-                   c[c.find("(") + 1:c.find(")")].split(","))
-        out.append("#{:02X}{:02X}{:02X}".format(r, g, b))
+    for t in i:
+        tp = t ** p1
+        if j is None:
+            c = lin(tp, c1, c2)
+        elif tp <= j:
+            c = c2 - (c2 - cmax) * tp / j
+        else:
+            c = cmax - (cmax - c1) * abs((tp - j) / (1 - j))
+        out.append(hcl(lin(t, h1, h2), c, lin(t ** p2, l1, l2)))
     return out
+
+
+def _viridis(name, n):
+    """n colors of a viridis-family palette exactly as R's
+    hcl.colors(n, name). R analog: grDevices::hcl.colors()"""
+    (typ, h1, h2, h3, c1, c2, c3, l1, l2, l3,
+     p1, p2, p3, p4, cmax1, cmax2) = _HCL_PARAMS[name]
+    if typ == "sequential":
+        h2 = h1 if h2 is None else h2
+        c2 = 0 if c2 is None else c2
+        p2 = p1 if p2 is None else p2
+        i = [1.0] if n == 1 else [1 - k / (n - 1) for k in range(n)]
+        return _hcl_seq(i, h1, h2, c1, c2, l1, l2, p1, p2, cmax1)
+    # divergingx: two sequential arms meeting at the center
+    p2 = p1 if p2 is None else p2
+    p4 = p2 if p4 is None else p4
+    n2 = -(-n // 2)
+    i = [0.0] if n == 1 else [1 - k * 2 / (n - 1) for k in range(n2)]
+    left = _hcl_seq(i, h1, h1 if h2 is None else h2, c1, c2, l1, l2,
+                    p1, p2, cmax1)
+    right = _hcl_seq(i, h3, h3 if h2 is None else h2, c3, c2, l3, l2,
+                     p3, p4, cmax2)
+    col = left + right[::-1]
+    if n // 2 < n2:
+        del col[n2 - 1]
+    return col
 
 
 # the fixed mixed hues for a qualitative palette (n <= 24)

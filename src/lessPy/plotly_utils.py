@@ -80,6 +80,10 @@ def to_hex(col):
     gray = _gray_level(lower)
     if gray is not None:
         return gray
+    # any of R's named colors, as col2rgb() resolves them
+    from .rcolors import R_COLORS
+    if lower in R_COLORS:
+        return R_COLORS[lower]
     return c1        # CSS name unknown to us; plotly handles it
 
 
@@ -603,7 +607,7 @@ def facet_panels(facet, facet_order, facet2=None,
 
 def finish_facet(fig, levels, ax, x_lab, y_lab, gridT1,
                  style_opts=None, y_cat=None, n_col=1, pos=None,
-                 height=None, width=None):
+                 height=None, width=None, x_cat=None):
     """Facet styling shared by the faceted renderers: per-panel y
     axes on a common scale (y label on the middle panel of the
     first column), x ticks on the bottom row only, vertical grid
@@ -670,7 +674,14 @@ def finish_facet(fig, levels, ax, x_lab, y_lab, gridT1,
                       showticklabels=c == 1)
         fig.update_yaxes(row=r, col=c, **ay)
         lowest = r == n_row or (r + 1, c) not in occupied
-        if lowest:
+        if lowest and x_cat is not None:
+            # categories along x, the vertical bars of a panel
+            ax_x = axis_cat(x_lab if c == mid_c else "")
+            ax_x.update(categoryorder="array",
+                        categoryarray=list(x_cat), tickmode="array",
+                        tickvals=list(x_cat), ticktext=list(x_cat))
+            fig.update_xaxes(row=r, col=c, showticklabels=True, **ax_x)
+        elif lowest:
             # a shared x axis hides the labels above the bottom row,
             #   so a ragged grid's lowest panel turns its own back on
             fig.update_xaxes(
