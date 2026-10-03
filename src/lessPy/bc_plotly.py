@@ -629,7 +629,10 @@ def bc_facet_plotly(x, x_name=None, facet_name=None,
             showlegend=True,
             legend=dict(title=dict(text=(legend_title
                                          if legend_title is not None
-                                         else by_name)),
+                                         else by_name),
+                                   font=dict(color=to_hex(
+                                       style_opts["lab_color"]))),
+                        font=dict(color=to_hex(style_opts["lab_color"])),
                         traceorder="normal"))
     if horiz:
         fig.update_xaxes(range=[axT1[0], axT1[-1]])   # includes zero

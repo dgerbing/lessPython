@@ -1020,6 +1020,11 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     facet_order = (_category_order(facet_ser)
                    if facet_ser is not None else None)
 
+    # a theme set by style(), or by this call's theme=, which the
+    #   wrapper has applied for the call
+    if theme is None:
+        theme = get_option("theme")
+
     # theme=: a bar chart without by is drawn in the theme's single
     #   bar color, which fill_scaled then varies in luminance; with
     #   by, the levels span the theme's sequential palette, darkest
@@ -1174,15 +1179,18 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
                                     n_miss=n_miss_x),
                    lines, quiet)
 
-    # labels default for aggregated data; for counts leave labels
-    # None so bc_plotly shows the value with % lines in hover
-    # R analog: Chart.R line ~716
+    # labels default for aggregated data, the value of the statistic;
+    #   bars of counts are labeled with their percentages, as lessR's
+    #   do (getOption("values"), "%"): of the total, or of each bar for
+    #   the 100% stacked chart. R analog: Chart.R ~716, .bc.main()
     if labels is None and (stat is not None or
                            (is_agg and y_ser is not None)):
         # the bars carry a statistic, so the label is its value;
         #   beside only arranges the bars, and a percentage of a sum
         #   of means is not a quantity
         labels = "input"
+    elif labels is None and form == "bar" and y_ser is None:
+        labels = "%"
 
     # ----- hierarchical forms aggregate per nesting level ---------
     # from the raw columns, not from the flat table built below
@@ -1962,4 +1970,5 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
 
 
 # font_size= scales all text of the returned figure
-Chart = font_scaled(attach_stats(Chart))
+from .style import with_theme as _with_theme  # noqa: E402
+Chart = font_scaled(attach_stats(_with_theme(Chart, own_param=True)))

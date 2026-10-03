@@ -463,7 +463,7 @@ def test_theme_sets_palette(d):
 
 def test_theme_unknown_rejected(d):
     import pytest
-    with pytest.raises(ValueError, match="unknown theme"):
+    with pytest.raises(ValueError, match="not a theme"):
         Chart("Dept", theme="chartreuse", data=d)
 
 
@@ -485,11 +485,17 @@ def test_stack100_bars_sum_to_one(d):
 
 def test_stack100_labels_show_counts(d):
     # R: labels="input" over proportions displays x.count
-    fig = Chart("Dept", by="Gender", stack100=True, data=d)
+    fig = Chart("Dept", by="Gender", stack100=True, labels="input",
+                data=d)
     cnt = pd.crosstab(d["Gender"], d["Dept"])
     for t in fig.data:
         assert list(t.text) == [str(v) for v in cnt.loc[t.name]]
     assert fig.layout.yaxis.title.text == "Proportion within Dept"
+    # by default each segment is its percentage of the bar, as R
+    fig = Chart("Dept", by="Gender", stack100=True, data=d)
+    pct = (cnt / cnt.sum(axis=0) * 100).round().astype(int)
+    for t in fig.data:
+        assert list(t.text) == [f"{v}%" for v in pct.loc[t.name]]
 
 
 def test_stack100_console_column_props_no_chisq(d, capsys):
@@ -686,9 +692,13 @@ def test_prop_labels_are_not_flattened_to_zero(d):
 def test_labels_decimals_defaults_unchanged(d):
     # no labels_decimals: each renderer keeps its own default,
     # matching what R's plotly path has always emitted
-    counts = [str(v) for v in
-              d["Dept"].value_counts().sort_index().tolist()]
-    assert list(Chart("Dept", data=d).data[0].text) == counts
+    # bars of counts default to their percentages, as lessR's do
+    cnt = d["Dept"].value_counts().sort_index()
+    pct = [f"{round(100 * v / cnt.sum())}%" for v in cnt]
+    assert list(Chart("Dept", data=d).data[0].text) == pct
+    counts = [str(v) for v in cnt.tolist()]
+    assert list(Chart("Dept", labels="input",
+                      data=d).data[0].text) == counts
     means = Chart("Dept", "Salary", stat="mean", data=d)
     assert all("." in t for t in means.data[0].text)
 

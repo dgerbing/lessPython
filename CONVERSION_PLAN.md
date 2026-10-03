@@ -1141,4 +1141,40 @@ for visual output (Cars93).
           group) and fig.stats.fit gains b0/b1; identical to R on
           Years/Salary overall and by Gender. Other fits keep the
           one-line fit="..." report.
+    - [x] default bar labels (user's call, Oct 2026): bars of counts
+          are labeled with their percentages, as lessR's plotly bars
+          (getOption("values") "%"): of the total, of the total with
+          by and beside, of each bar for stack100; a statistic's
+          bars keep their values. Resolved in Chart(), so
+          bc_plotly()'s own default ("input") is unchanged for direct
+          calls, and the hover keeps its % lines. Identical to R on 8
+          cases; R's base-graphics rule turning labels off past 14
+          levels does not apply to its plotly bars, so neither here.
+          labels="input" gives the counts.
+    - [x] style() (style.py), the cross-view theme system: lessR's 18
+          themes x sub_themes (none/default/black/wsj) generated from
+          R itself into _themes.py (style(theme[, sub_theme]) then
+          getOption for every setting lessPy reads, colors as hex);
+          text sizes stay lessPy's own and are not reset by a theme.
+          R's semantics: a theme resets all settings to its own;
+          naming settings alone changes only them; style() restores
+          the default; get=/set= round-trip; trans sets both fills;
+          R-only settings (Rmd/console/call parameters) refused by
+          name. Startup now = style() (lessR's load state), which
+          moved a few default colors to R's (axis/tick #262626, lab
+          #262626, grid #D9D9D9). Chart(), X(), XY() take theme= for
+          that call only (with_theme wrapper; R's style(theme) +
+          on.exit restore), and Chart() falls back to the global
+          theme. Renderers made to honor: legend text in lab_color
+          (was plotly's dark default, invisible on black), font_family
+          via the font_scaled wrapper, grid_x/y_color over grid_color.
+          tests/conftest.py resets the style around every test.
+          Axes (both packages, fixed Oct 2026): the line takes
+          axis_x_color else axis_color, the tick labels
+          axis_x_text_color else axis_text_color else axis_color; on
+          sub_theme="black" every theme but gray keeps axis_color
+          dark and sets the axes through the x settings, so both
+          packages had drawn dark tick labels on black. Default tick
+          labels are now the theme's axis_text_color (#333333 for
+          the default, was #262626).
 

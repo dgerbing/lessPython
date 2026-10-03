@@ -138,7 +138,9 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
   max, n_intervals)` fixes the value axis, and `break_x=` breaks
   category labels at their spaces onto separate lines (on by
   default for unrotated vertical bars; a `~` in a label is a
-  non-breaking space). Value labels: `labels=` chooses `"%"`,
+  non-breaking space). Value labels: bars of counts are labeled with their
+  percentages by default, as in lessR, and a statistic's bars with
+  their values; `labels=` chooses `"%"`,
   `"input"`, `"prop"`, or `"off"`, and `labels_decimals=` sets
   their decimal places for bar, pie, and bubble; `labels_cut=`
   leaves off a bar label whose share falls below it.
@@ -305,6 +307,22 @@ results object) rather than mutating the input.
   labels for a time unit (years, quarters, months, weeks, days).
 
 ## Options
+
+- **`style(theme=, sub_theme=, get=False, set=None, **settings)`** —
+  The appearance of every subsequent `Chart()`, `X()`, and `XY()`,
+  as lessR's `style()`. `style("darkred")` applies one of lessR's 18
+  color themes (`colors`, the default, `lightbronze`, `dodgerblue`,
+  `darkred`, `gray`, `gold`, `darkgreen`, `blue`, `red`, `rose`,
+  `slatered`, `green`, `purple`, `sienna`, `brown`, `orange`,
+  `white`, `light`), with lessR's own colors; `sub_theme="black"`
+  draws on a black background, `"default"` on a gray panel with white
+  grid lines, `"wsj"` on a tan one. Name any setting to change only
+  it, with or without a theme: `style(panel_fill="gray95",
+  axis_size=1.1)`, `style(trans=0.4)` for both bar and point fills,
+  `style(font_family="serif")`. `style()` restores the default theme;
+  `saved = style(get=True)` and `style(set=saved)` keep and restore a
+  style. Each of `Chart()`, `X()`, and `XY()` also takes `theme=`,
+  which applies a theme to that call only.
 
 - **`get_option(name, default=None)`** — Read a lessPy style /
   behavior option.

@@ -226,9 +226,13 @@ def legend_style(by_name, style_opts, title=None, position=None,
     leg = dict(
         title=dict(text=abbrev(text, abbrev_n) or "",
                    font=dict(size=round(
-                       15 * get_option("lab_size", 1) * mult))),
+                       15 * get_option("lab_size", 1) * mult),
+                       color=to_hex(style_opts["lab_color"]))),
+        # the legend reads in the theme's label color, light on the
+        #   black sub_theme as the axis labels are
         font=dict(size=round(
-            16 * get_option("axis_size", 0.9) * mult)),
+            16 * get_option("axis_size", 0.9) * mult),
+            color=to_hex(style_opts["lab_color"])),
         bgcolor=to_hex(style_opts["window_fill"]),
         bordercolor=to_hex(style_opts["legend_border"]),
         borderwidth=1,
@@ -320,9 +324,13 @@ def axis_format(vals, digits_d=2, axis_fmt="K", prefix=""):
 
 
 def grid_style():
-    """R analog: .grid_style()"""
+    """R analog: .grid_style(). A sub_theme sets the grid through
+    grid_x_color / grid_y_color (white on the gray panel of "default"),
+    which take precedence over the grid color itself"""
+    clr = (get_option("grid_y_color") or get_option("grid_x_color")
+           or get_option("grid_col", "gray85"))
     return {
-        "color": to_hex(get_option("grid_col", "gray85")),
+        "color": to_hex(clr),
         "width": get_option("grid_lwd", 0.5),
         "dash": get_option("grid_lty", None),
     }
@@ -359,17 +367,26 @@ def y_grid(y_vals):
 
 
 def axis_base():
-    """R analog: axis_base()"""
+    """R analog: axis_base(). A sub_theme sets the axes through their
+    own settings, so on sub_theme="black" the axis line and its labels
+    are light where axis_color stays dark; the labels are text, so they
+    take axis_text_color, as lessR's base R axes do"""
+    ax_line = (get_option("axis_x_color")
+               or get_option("axis_color", "black"))
+    ax_text = (get_option("axis_x_text_color")
+               or get_option("axis_text_color")
+               or get_option("axis_color", "black"))
     return {
         "zeroline": False,
         "showline": True,
-        "linecolor": to_hex(get_option("axis_color", "black")),
+        "linecolor": to_hex(ax_line),
         "linewidth": get_option("axis_lwd", 1),
         "ticks": "outside",
         "ticklen": 4,
+        "tickcolor": to_hex(ax_line),
         "automargin": True,
         "tickfont": {
-            "color": to_hex(get_option("axis_color", "black")),
+            "color": to_hex(ax_text),
             "size": 16 * get_option("axis_size", 0.9),
         },
         "title": {
@@ -490,6 +507,10 @@ def font_scaled(func):
         fig = func(*args, **kwargs)
         if sub and hasattr(fig, "layout"):
             add_subtitle(fig, sub)
+        # style(font_family=) sets the family of all plotted text
+        family = get_option("font_family")
+        if family and hasattr(fig, "layout"):
+            fig.update_layout(font=dict(family=family))
         try:
             if font_size and font_size != 1 and hasattr(fig, "layout"):
                 apply_font_size(fig, font_size)

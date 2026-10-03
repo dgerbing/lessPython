@@ -14,6 +14,7 @@ from .plt_plotly import plt_plotly
 from .radar_plotly import radar_plotly
 from .Regression import Regression
 from .utils import get_option, set_option
+from .style import style
 from .vbs_plotly import vbs_plotly
 from .X import X
 from .ANOVA import ANOVA
@@ -57,4 +58,7 @@ __all__ = ["Chart", "X", "XY", "ANOVA", "ttest", "Regression", "Logit",
            "freq_poly_plotly", "hier_plotly", "hs_plotly",
            "pie_plotly", "plt_plotly", "radar_plotly",
            "vbs_plotly",
-           "get_option", "set_option"]
+           "get_option", "set_option", "style"]
+
+# begin as lessR does at load, in the default theme
+style()

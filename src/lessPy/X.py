@@ -426,4 +426,5 @@ def X(x, by=None, facet=None, data=None, filter=None,
 
 # font_size= scales all text of the returned figure
 from .stats_out import attach_stats as _attach_stats  # noqa: E402
-X = font_scaled(_attach_stats(X, capture=True))
+from .style import with_theme as _with_theme  # noqa: E402
+X = font_scaled(_attach_stats(_with_theme(X), capture=True))
