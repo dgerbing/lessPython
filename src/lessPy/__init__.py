@@ -49,7 +49,13 @@ from .details import details
 from .VariableLabels import VariableLabels
 from .XY import XY
 
-__version__ = "0.1.0"
+# the version of the installed distribution, read from its metadata so
+#   that it cannot fall behind pyproject.toml
+try:
+    from importlib.metadata import version as _version
+    __version__ = _version("lessPython")
+except Exception:                       # running from an uninstalled tree
+    __version__ = "unknown"
 
 __all__ = ["Chart", "X", "XY", "ANOVA", "ttest", "Regression", "Logit",
            "read_data", "datasets", "reshape_long", "reshape_wide", "pivot", "corEFA", "corCFA", "corScree", "corReorder", "corProp", "Correlation", "corReflect", "corRead", "Prop_test", "corPrint", "Flows", "date_infer", "format_date_labels", "rename", "showColors", "getColors", "simCLT", "simMeans", "simFlips", "simCImean", "order_by", "prob_norm", "prob_znorm", "prob_tcut", "details",
