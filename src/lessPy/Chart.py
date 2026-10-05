@@ -91,8 +91,8 @@ def _color_range(pal, n):
 
 
 def _palette_names():
-    from .getColors import _SEQ_NAMES, _VIRIDIS
-    return set(_SEQ_NAMES) | set(_VIRIDIS) | {
+    from .getColors import _SEQ_NAMES, _SEQ_R, _VIRIDIS
+    return set(_SEQ_NAMES) | set(_SEQ_R) | set(_VIRIDIS) | {
         "hues", "Okabe-Ito", "Tableau", "distinct"}
 
 
@@ -1024,6 +1024,21 @@ def Chart(x, y=None, data=None, filter=None, by=None, facet=None,
     #   wrapper has applied for the call
     if theme is None:
         theme = get_option("theme")
+
+    # an ordered category is ordinal, so its default fill is the
+    #   theme's sequential palette, light to dark in the order of the
+    #   levels, not distinct hues. Fill encodes x without by and by
+    #   with it, so the ordering of that variable is the one that
+    #   applies. R analog: Chart.R is.ordered() fill
+    if (form == "bar" and fill is None and facet_ser is None
+            and fill_split is None and not fill_scaled):
+        enc = by_ser if by_ser is not None else x_ser
+        if (isinstance(enc.dtype, pd.CategoricalDtype)
+                and enc.cat.ordered):
+            fill = _color_range(
+                _THEME_PALETTE.get(theme, "blues"),
+                len(by_order) if by_order is not None
+                else len(x_order))
 
     # theme=: a bar chart without by is drawn in the theme's single
     #   bar color, which fill_scaled then varies in luminance; with

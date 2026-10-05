@@ -295,6 +295,7 @@ results object) rather than mutating the input.
 
 - **`getColors(pal=, end_pal=, n=, ...)`** — Generate a color
   palette (HCL qualitative/sequential/divergent, viridis family,
+  R's `"rainbow"`/`"heat"`/`"terrain"` and their `"_hcl"` versions,
   or fixed lists) as a list of hex colors.
 - **`showColors(color=, n_col=6)`** — Display the named colors as
   a labeled grid of swatches.

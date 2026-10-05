@@ -910,8 +910,17 @@ for visual output (Cars93).
           Ported R's pal_explicit branch of .hier_color_resolve
           (shade read off the 256-color ramp by magnitude);
           hex-identical to R for counts and stat="mean".
-          Python getColors has no "terrain", so that name is
-          not recognized here.
+          "terrain" now recognized too (R's seq.pals), after
+          getColors gained R's six palettes: rainbow, heat,
+          terrain (grDevices HSV) and rainbow_hcl, heat_hcl,
+          terrain_hcl (colorspace); 45 cases hex-identical to
+          R. Fixed in both packages: heat_hcl/terrain_hcl had
+          been flattened by lessR's c=65/l=60 defaults, now
+          colorspace's own trajectories unless c/l given.
+    - [x] ordered category -> sequential default bar fill (theme's
+          palette, light to dark in level order; x without by, by
+          with it). Restored in lessR too, where the check had been
+          lost though Chart.Rd documented it. 9 cases hex-identical.
     - [x] quick behaviors: stack100 axis "Proportion within X"
           and column proportions printed in place of the
           chi-square; beside+stat labels show the value (plotly

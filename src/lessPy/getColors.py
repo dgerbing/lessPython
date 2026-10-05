@@ -5,7 +5,9 @@
 # The HCL families (hues/qualitative, sequential, divergent) are
 # reproduced exactly from R's grDevices HCL and colorspace
 # trajectories; the manual families interpolate in RGB; Okabe-Ito,
-# Tableau and "distinct" are fixed lists. The viridis family maps
+# Tableau and "distinct" are fixed lists. The R palettes "rainbow",
+# "heat", "terrain" (grDevices HSV) and their colorspace "_hcl"
+# counterparts are computed exactly as R does. The viridis family maps
 # to plotly's built-in colorscales (a documented approximation),
 # and R's wesanderson palettes are not ported (external package).
 
@@ -37,6 +39,9 @@ _SEQ_HUE = {
     "magentas": 330, "grays": 0,
 }
 _SEQ_NAMES = list(_SEQ_HUE)
+# R's own palettes, grDevices and colorspace. R analog: nmR
+_SEQ_R = ("rainbow", "heat", "terrain",
+          "rainbow_hcl", "heat_hcl", "terrain_hcl")
 _VIRIDIS = {"viridis": "Viridis", "cividis": "Cividis",
             "plasma": "Plasma", "inferno": "Inferno",
             "spectral": "Spectral"}
@@ -344,6 +349,116 @@ def _viridis(name, n):
     return col
 
 
+# --- R's own palettes: grDevices HSV and colorspace HCL ------------
+
+def _hsv(h, s, v):
+    """One HSV color as hex, as grDevices hsv(): R's hsv2rgb() and
+    its rounding of each channel, (int)(255 * x + 0.5)."""
+    if s == 0:
+        r = g = b = v
+    else:
+        t = 6 * math.fmod(h, 1.0)
+        i = math.floor(t)
+        f = t - i
+        p, q, u = v * (1 - s), v * (1 - s * f), v * (1 - s * (1 - f))
+        r, g, b = [(v, u, p), (q, v, p), (p, v, u),
+                   (p, q, v), (u, p, v), (v, p, q)][int(i) % 6]
+    return "#{:02X}{:02X}{:02X}".format(
+        *(int(255 * x + 0.5) for x in (r, g, b)))
+
+
+def _seq_int(a, b, n):
+    """seq.int(a, b, length.out=n)"""
+    if n == 1:
+        return [a]
+    by = (b - a) / (n - 1)
+    return [a + k * by for k in range(n)]
+
+
+def _rainbow(n, start=0.0, end=None):
+    """grDevices rainbow(): HSV hues from start to end."""
+    if end is None:
+        end = max(1, n - 1) / n
+    hs = _seq_int(start, (1 if start > end else 0) + end, n)
+    return [_hsv(math.fmod(h, 1.0), 1, 1) for h in hs]
+
+
+def _heat(n):
+    """grDevices heat.colors(): red to yellow, then the yellows
+    lighten for the last quarter."""
+    j = n // 4
+    i = n - j
+    cols = _rainbow(i, 0, 1 / 6)
+    if j > 0:
+        cols += [_hsv(1 / 6, s, 1)
+                 for s in _seq_int(1 - 1 / (2 * j), 1 / (2 * j), j)]
+    return cols
+
+
+def _terrain(n):
+    """grDevices terrain.colors(): green to yellow to near white."""
+    k = n // 2
+    h, s, v = (4 / 12, 2 / 12, 0 / 12), (1, 1, 0), (0.65, 0.9, 0.95)
+    first = [_hsv(a, b, c) for a, b, c in zip(
+        _seq_int(h[0], h[1], k), _seq_int(s[0], s[1], k),
+        _seq_int(v[0], v[1], k))] if k > 0 else []
+    m = n - k + 1
+    second = [_hsv(a, b, c) for a, b, c in zip(
+        _seq_int(h[1], h[2], m)[1:], _seq_int(s[1], s[2], m)[1:],
+        _seq_int(v[1], v[2], m)[1:])]
+    return first + second
+
+
+def _colorspace_seq(n, h, c, l, power):
+    """colorspace sequential_hcl() with explicit pairs: h, c, l,
+    power each (first, last). Hue moves linearly, chroma and
+    luminance by their powers, as colorspace seqhcl()."""
+    out = []
+    for i in _seq_int(1.0, 0.0, n):
+        H = h[1] - (h[1] - h[0]) * i
+        C = c[1] - (c[1] - c[0]) * i ** power[0]
+        L = l[1] - (l[1] - l[0]) * i ** power[1]
+        out.append(hcl(H, C, L))
+    return out
+
+
+# colorspace's heat_hcl() and terrain_hcl(): h, c., l, power pairs
+_CS_SEQ = {
+    "heat_hcl": ((0, 90), (100, 30), (50, 90), (1 / 5, 1)),
+    "terrain_hcl": ((130, 0), (80, 0), (60, 95), (1 / 10, 1)),
+}
+
+
+def _pair(v):
+    return tuple(v) if isinstance(v, (tuple, list)) else None
+
+
+def _seq_r(name, n, c, l):
+    """n colors of one of R's own palettes, as lessR's getColors()
+    computes them. "heat_hcl" and "terrain_hcl" follow colorspace's
+    own chroma and luminance trajectories, replaced only by a c or l
+    given: a single c ramps from c to 0, a single l is constant, as
+    colorspace reads them. "rainbow_hcl" is lessR's qualitative c=65
+    and l=60 unless given. R analog: getColors(), kind seq.R"""
+    if name == "rainbow":
+        return _rainbow(n)
+    if name == "heat":
+        return _heat(n)
+    if name == "terrain":
+        return _terrain(n)
+    if name == "rainbow_hcl":            # colorspace qualitative_hcl
+        c = 65 if c is None else c
+        l = 60 if l is None else l
+        hs = _seq_int(0, 360 * (n - 1) / n, n)
+        return [hcl(h, c, l) for h in hs]
+    h, cc, ll, p = _CS_SEQ[name]
+    if c is not None:
+        cc = _pair(c) or (c, 0)
+    if l is not None:
+        ll = _pair(l) or (l, l)
+    return _colorspace_seq(n, h, cc, ll, p)
+
+
 # the fixed mixed hues for a qualitative palette (n <= 24)
 _MIX = [240, 60, 120, 0, 275, 180, 30, 90, 210, 330, 150, 300]
 
@@ -356,7 +471,8 @@ def getColors(pal=None, end_pal=None, n=None, h=0, h2=None, c=None,
 
     pal: a palette name ("hues", a sequential name such as "blues",
     "viridis"/"cividis"/"plasma"/"spectral", "Okabe-Ito", "Tableau",
-    "distinct") or one or more explicit colors. end_pal: an ending
+    "distinct", R's "rainbow"/"heat"/"terrain" and their "_hcl"
+    versions) or one or more explicit colors. end_pal: an ending
     color/name for a divergent (two sequential names) or manual
     (two colors) gradient. h/h2, c, l, power: HCL parameters.
     R analog: getColors()"""
@@ -389,6 +505,8 @@ def getColors(pal=None, end_pal=None, n=None, h=0, h2=None, c=None,
             kind = "divergent" if (end_pal is not None and
                                    end_pal[0] in _SEQ_NAMES) \
                 else "sequential"
+        elif p0 in _SEQ_R:
+            kind = "seq.R"
         elif p0 == "hues":
             kind = "qualitative"
         elif p0 in _VIRIDIS:
@@ -454,6 +572,10 @@ def getColors(pal=None, end_pal=None, n=None, h=0, h2=None, c=None,
               list)) else (l, l))
         pw = 0.75 if power is None else power
         pal = _diverging_hcl(n, h, h2, cc, ll, pw, fixup)
+
+    elif kind == "seq.R":
+        pal = _seq_r(pal[0], n, None if c_miss else c,
+                     None if l_miss else l)
 
     elif kind == "viridis":
         ttl = "Viridis Style Palette: " + pal[0]

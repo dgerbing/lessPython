@@ -28,6 +28,9 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from .getColors import _SEQ_NAMES
+
+# the palettes read by magnitude, R's seq.pals of .hier_color_resolve()
+_HIER_SEQ = set(_SEQ_NAMES) | {"terrain"}
 from .utils import STAT_FUN, get_option
 from .plotly_utils import (
     BASE_COLORS, facet_layout, plotly_style, to_hex,
@@ -167,7 +170,7 @@ def hier_color_resolve_byfac(top_levels, fill, x, y, stat, facet,
     panel's own counts (or stat of y), so each panel spans the
     palette; None for any other fill, which every panel shares.
     R analog: the fill_vec_byfac branch of .hier_color_resolve()"""
-    if not (isinstance(fill, str) and fill.lower() in _SEQ_NAMES):
+    if not (isinstance(fill, str) and fill.lower() in _HIER_SEQ):
         return None
     fac = facet.astype(str)
     out = {}
@@ -191,7 +194,7 @@ def hier_color_resolve(top_levels, fill=None, x=None, y=None,
     ported."""
     if fill is None:
         fill = BASE_COLORS
-    if (isinstance(fill, str) and fill.lower() in _SEQ_NAMES
+    if (isinstance(fill, str) and fill.lower() in _HIER_SEQ
             and x is not None):
         return _seq_palette_fill(top_levels, fill.lower(), x, y,
                                  stat)
