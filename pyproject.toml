@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lessPython"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python port of R's lessR: analytic-view visualizations, statistical models, and data utilities, rendered with plotly"
 authors = [{ name = "David W. Gerbing", email = "gerbing@pdx.edu" }]
 readme = "README.md"
