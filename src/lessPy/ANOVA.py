@@ -25,7 +25,7 @@ from .plotly_utils import (
     BASE_COLORS, axis_cat, axis_format, axis_num, make_trans,
     plot_border, plotly_style, to_hex, x_grid)
 from .Regression import _getdigits, _prntbl
-from .utils import fmt, get_column, get_option, pretty
+from .utils import fmt, get_column, get_option, pretty, show_plots
 
 
 class ANOVAResults:
@@ -384,14 +384,14 @@ def _oneway(fit, yv, gv, y_name, x_name, levels, n_keep, d,
         plots["means"] = _anova_means_plot(
             yv, gv, y_name, x_name, levels, jitter_x, d)
 
-    return ANOVAResults(
+    return show_plots(ANOVAResults(
         formula=formula, design="oneway", n_obs=n_obs,
         n_keep=n_keep, digits_d=d, response=y_name,
         factors=[x_name], descriptive=desc, grand_mean=grand,
         anova=tbl,
         effects={"R_squared": rsq, "R_sq_adjusted": rsq_adj,
                  "omega_squared": omsq, "cohen_f": cohen_f},
-        tukey=tukey, plots=plots)
+        tukey=tukey, plots=plots))
 
 
 def _anova_means_plot(yv, gv, y_name, x_name, levels, jitter_x,
@@ -611,12 +611,12 @@ def _twoway(fit, yv, fvals, y_name, facs, flevs, n_keep, d,
                 x1v, np.asarray(fit.fittedvalues), x2v,
                 "Fitted", f1, f2, l1, l2, d, "Fitted Values")
 
-    return ANOVAResults(
+    return show_plots(ANOVAResults(
         formula=formula, design=design, n_obs=n_obs,
         n_keep=n_keep, digits_d=d, response=y_name,
         factors=[f1, f2], cell_n=cell_n,
         marginal_means={f1: m1, f2: m2}, grand_mean=grand,
-        anova=t, effects=eff, tukey=tukey, plots=plots)
+        anova=t, effects=eff, tukey=tukey, plots=plots))
 
 
 def _cat_line_fig(title, x_name, y_name, levels_x, series, d,

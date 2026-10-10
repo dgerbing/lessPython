@@ -143,8 +143,29 @@ def test_loess_span(d):
     f1 = [t for t in XY("Years", "Salary", data=d,
                         fit="loess").data if t.name == "Fit"][0]
     f2 = [t for t in XY("Years", "Salary", data=d, fit="loess",
-                        span=0.3).data if t.name == "Fit"][0]
+                        fit_span_loess=0.3).data if t.name == "Fit"][0]
     assert not np.allclose(f1.y, f2.y)
+    with pytest.raises(ValueError, match="renamed to fit_span_loess"):
+        XY("Years", "Salary", data=d, fit="loess", span=0.3)
+
+
+@pytest.mark.parametrize("span, deg, fam, mse, first3", [
+    (0.75, 2, "gaussian", 100834065.368, (68937.49, 67290.04, 67290.04)),
+    (0.5, 1, "gaussian", 103332428.529, (67393.49, 67246.40, 67246.40)),
+    (0.5, 2, "symmetric", 97463877.360, (67464.07, 66332.96, 66332.96)),
+    (0.5, 1, "symmetric", 103785991.092, (66632.42, 66524.54, 66524.54)),
+])
+def test_loess_matches_R_interpolate(span, deg, fam, mse, first3):
+    # R: loess(Salary ~ Years, span, degree, family) on Employee, its
+    # default surface="interpolate" (kd tree + Hermite cubics)
+    from lessPy.XY import _loess
+    import lessPy as lp
+    e = lp.read_data("Employee").dropna(subset=["Years", "Salary"])
+    xs, ys, f, _ = _loess(e.Years.to_numpy(float),
+                          e.Salary.to_numpy(float), (span, deg, fam))
+    assert ((ys - f) ** 2).sum() / (len(ys) - 2) == \
+        pytest.approx(mse, abs=0.01)
+    assert f[:3] == pytest.approx(first3, abs=0.01)
 
 
 def test_loess_by_groups(d):
@@ -332,10 +353,11 @@ def test_facet_with_by(d):
     assert len(shown) == 2             # legend from first panel
 
 
-def test_facet_forecast_error(dts):
+def test_forecast_by_refused_facet_named(dts):
+    # lessR Aug 2026: by= halts with ts_ahead, naming facet=
     dts = dts.assign(G=["a", "b"] * 5)
-    with pytest.raises(ValueError, match="facet"):
-        XY("Month", "Sales", data=dts, facet="G", ts_ahead=3)
+    with pytest.raises(ValueError, match="facet="):
+        XY("Month", "Sales", data=dts, by="G", ts_ahead=3)
 
 
 @pytest.fixture
@@ -465,7 +487,7 @@ def test_contour_fit_ellipse(d):
 
 
 def test_contour_no_by(d):
-    with pytest.raises(ValueError, match='form="scatter"'):
+    with pytest.raises(ValueError, match='use facet'):
         XY("Years", "Salary", by="Gender", data=d,
            form="contour")
 
@@ -552,7 +574,7 @@ def test_smooth_fit_band(d):
 
 
 def test_smooth_no_by(d):
-    with pytest.raises(ValueError, match='form="scatter"'):
+    with pytest.raises(ValueError, match='use facet'):
         XY("Years", "Salary", by="Gender", data=d, form="smooth")
 
 
@@ -736,16 +758,34 @@ def test_ts_facet_sorted(dtsf):
         assert (np.diff(xs.astype(np.int64)) > 0).all()
 
 
-def test_ts_facet_by_not_ported(dtsf):
+def test_ts_facet_by_series(dtsf):
+    # each panel draws one series per by level, one legend
     dtsf = dtsf.assign(G=["a", "b"] * 12)
-    with pytest.raises(NotImplementedError, match="by="):
-        XY("Month", "Sales", data=dtsf, by="G", facet="Region")
+    fig = XY("Month", "Sales", data=dtsf, by="G", facet="Region",
+             quiet=True)
+    named = [t.name for t in fig.data if t.showlegend]
+    assert named == ["a", "b"]
+    assert {t.name for t in fig.data} >= {"a", "b"}
 
 
-def test_ts_facet_no_ts_unit(dtsf):
-    with pytest.raises(ValueError, match="ts_unit"):
-        XY("Month", "Sales", data=dtsf, facet="Region",
-           ts_unit="years")
+def test_ts_facet_ts_unit(dtsf):
+    # ts_unit aggregates within each panel; the axis names it
+    fig = XY("Month", "Sales", data=dtsf, facet="Region",
+             ts_unit="quarters", quiet=True)
+    per_region = dtsf.assign(
+        Q=dtsf.Month.dt.to_period("Q")).groupby(["Region", "Q"]).Sales
+    n_q = per_region.sum().groupby(level=0).size()
+    lines = [t for t in fig.data if t.mode and "lines" in t.mode]
+    assert sorted(len(t.x) for t in lines) == sorted(n_q.tolist())
+    assert fig.layout.yaxis.title.text == "Total Sales by Quarter"
+
+
+def test_ts_facet_forecast(dtsf):
+    fig = XY("Month", "Sales", data=dtsf, facet="Region",
+             ts_ahead=3, quiet=True)
+    fc = [t for t in fig.data if t.name == "Forecast"]
+    assert len(fc) == dtsf.Region.nunique()      # one per panel
+    assert sum(bool(t.showlegend) for t in fc) == 1
 
 
 # ----- ts_ aggregation / stack / area ---------------------------
@@ -1030,9 +1070,17 @@ def test_font_size_scales_text(d):
     assert sx.title.font.size == bx.title.font.size
 
 
-def test_stat_needs_one_categorical(d):
-    with pytest.raises(ValueError, match="stat="):
-        XY("Years", "Salary", stat="mean", data=d)
+def test_stat_at_each_value_of_x(d, capsys):
+    # lessR Aug 2026: the statistic of y at each value of x
+    fig = XY("Years", "Salary", stat="mean", data=d)
+    xs = np.asarray(fig.data[0].x, float)
+    want = d.groupby("Years")["Salary"].mean()
+    assert np.allclose(np.asarray(fig.data[0].y, float),
+                       want.loc[xs].to_numpy())
+    assert fig.layout.yaxis.title.text == "Mean of Salary"
+    assert "- by levels of -" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="no by="):
+        XY("Years", "Salary", stat="mean", by="Gender", data=d)
 
 
 def test_show_runs(d, capsys):
@@ -1120,3 +1168,94 @@ def test_stat_and_row_names_point_to_chart(d):
                 quiet=True)
     marks = [t for t in fig.data if t.mode == "markers"]
     assert len(marks[0].y) == len(d)           # one point per row
+
+
+# ----- lessR Aug–Sep 2026 XY() revisions (plan item 42) -----------
+
+@pytest.fixture
+def emp():
+    import lessPy as lp
+    return lp.read_data("Employee")
+
+
+def test_qq_keywords_any_case(emp):
+    from scipy import stats as sps
+    fig = XY(".NORMAL", "Salary", data=emp, quiet=True)
+    assert fig.layout.xaxis.title.text == "Normal Quantiles"
+    pts = [t for t in fig.data if t.mode == "markers"][0]
+    y = emp["Salary"].to_numpy(float)
+    n = len(y)
+    p = (np.arange(1, n + 1) - 0.5) / n          # R ppoints, n > 10
+    q = sps.norm.ppf(p, y.mean(), y.std(ddof=1))
+    assert np.allclose(np.sort(np.asarray(pts.x, float)), q)
+    ref = fig.data[0]                            # 45-degree line first
+    assert list(ref.x) == list(ref.y)
+    for kw in (".lognormal", ".exponential", ".Uniform"):
+        XY(kw, "Salary", data=emp, quiet=True)
+    assert XY(".index", "Salary", data=emp, quiet=True) is not None
+    with pytest.raises(ValueError, match="keyword"):
+        XY(".nrmal", "Salary", data=emp)
+
+
+def test_qq_per_facet_group(emp):
+    fig = XY(".normal", "Salary", data=emp, facet="Gender",
+             quiet=True)
+    refs = [t for t in fig.data if t.mode == "lines"]
+    assert len(refs) == 2                        # one per panel
+
+
+def test_sunflower(emp):
+    import lessPy as lp
+    m = lp.read_data("Mach4")
+    fig = XY("m01", "m02", data=m, form="sunflower", quiet=True)
+    dots = [t for t in fig.data if t.mode == "markers"][0]
+    cnt = m.groupby(["m01", "m02"]).size()
+    assert sorted(np.asarray(dots.customdata).tolist()) == \
+        sorted(cnt.tolist())
+    petals = [t for t in fig.data if t.mode == "lines"][0]
+    n_seg = sum(1 for v in petals.x if v is None)
+    assert n_seg == cnt[cnt > 1].sum()            # one per observation
+    fig = XY("m01", "m02", data=m, form="sunflower", facet="Gender",
+             quiet=True)
+    assert len([t for t in fig.data if t.mode == "markers"]) == 2
+    with pytest.raises(ValueError, match="petal"):
+        XY("m01", "m02", data=m, form="sunflower", by="Gender")
+    with pytest.raises(ValueError, match="petal"):
+        XY(["m01", "m03"], "m02", data=m, form="sunflower")
+
+
+def test_splom_density_cells(emp):
+    v = ["Years", "Pre", "Post"]
+    fig = XY(v, v, data=emp, form="contour", quiet=True)
+    cont = [t for t in fig.data if t.type == "contour"]
+    assert len(cont) == 3                        # lower triangle
+    z = np.asarray(cont[0].z, float)
+    step = cont[0].contours.size
+    assert (z.max() - z.min()) / step == pytest.approx(8)  # 8 bands
+    fig = XY(v, v, data=emp, form="smooth", quiet=True)
+    assert len([t for t in fig.data if t.type == "heatmap"]) == 3
+
+
+def test_multi_y_time_series():
+    import lessPy as lp
+    sp = lp.read_data("StockPrice")
+    ap = sp[sp.Company == "Apple"].assign(P2=lambda d: d.Price * 2)
+    fig = XY("Month", ["Price", "P2"], data=ap, ts_unit="years",
+             quiet=True)
+    assert {t.name for t in fig.data if t.showlegend} == {"Price", "P2"}
+    assert fig.layout.yaxis.title.text == "Total by Year"
+    fig = XY("Month", ["Price", "P2"], data=ap, quiet=True)
+    assert not fig.layout.yaxis.title.text       # nothing to report
+
+
+def test_complete_final_period_kept():
+    # monthly data dated the 1st: its last year is complete though no
+    # date reaches Dec 31 (lessR ts_truncate fix)
+    d = pd.DataFrame({"M": pd.date_range("2020-01-01", periods=24,
+                                         freq="MS"),
+                      "S": np.arange(24.0)})
+    fig = XY("M", "S", data=d, ts_unit="years", quiet=True)
+    assert len(fig.data[0].x) == 2
+    d2 = d.iloc[:18]                              # 6 of 12 months
+    fig = XY("M", "S", data=d2, ts_unit="years", quiet=True)
+    assert len(fig.data[0].x) == 1

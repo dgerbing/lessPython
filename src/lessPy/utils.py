@@ -8,9 +8,9 @@ import math
 
 # style settings; R analog: options() set by lessR style()
 _OPTIONS = {
-    "main_size":     1.0,
-    "lab_size":      1.0,
-    "axis_size":     0.9,
+    "main_size":     1.16,      # zzz_on.R
+    "lab_size":      1.05,      # zzz_on.R
+    "axis_size":     0.80,      # zzz_on.R
     "axis_color":    "black",
     "lab_color":     "black",
     "grid_color":    "gray90",
@@ -23,6 +23,7 @@ _OPTIONS = {
     "panel_fill":    "white",
     "window_fill":   "white",
     "digits_d":      2,
+    "suggest":       True,      # >>> Suggestions, as R
     "pt_color":      "#324E5C",   # rgb(50,78,92), zzz_on.R
     "trans_pt_fill": 0.10,
     "segment_color": "gray40",
@@ -274,3 +275,38 @@ def pretty(lo, hi, n=5):
     vals = [(ns + i) * unit for i in range(int(nu - ns) + 1)]
     # avoid -0.0 and float dust such as 0.30000000000000004
     return [round(v, 10) + 0.0 for v in vals]
+
+
+def _in_notebook():
+    """True in a notebook kernel (Jupyter, Colab, VS Code), False in
+    a script, the terminal, or the IPython console."""
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return False
+    ip = get_ipython()
+    return ip is not None and getattr(ip, "kernel", None) is not None
+
+
+def show_plots(result):
+    """Show the figures an analysis returns, as lessR draws its
+    graphics as it runs. Only in a notebook: elsewhere fig.show()
+    opens a browser tab per figure, so the figures stay in .plots
+    (or .attrs["plots"] for a returned DataFrame). Displayed as a
+    notebook displays a returned Chart() figure; a display failure
+    leaves the figures in .plots rather than lose the analysis.
+    Returns result."""
+    attrs = getattr(result, "attrs", None)
+    plots = (attrs.get("plots") if isinstance(attrs, dict)
+             else getattr(result, "plots", None))
+    if plots and _in_notebook():
+        from IPython.display import display
+        try:
+            for fig in plots.values():
+                if fig is not None:
+                    display(fig)
+        except Exception as e:
+            import warnings
+            warnings.warn(f"figures not displayed ({e}); they are "
+                          "in .plots, show one with .show()")
+    return result

@@ -178,6 +178,9 @@ color; pass a `pt_shape=` vector to vary the plot symbol as well.
 
 Inferential analyses. Each prints the full analysis and returns a
 results object with numeric fields and any figures in `.plots`.
+In a notebook (Jupyter, Colab) the figures also display when the
+analysis runs; from a script, show one with `.show()`, such as
+`r.plots["scatter"].show()`.
 
 - **`Regression(my_formula, data=, ...)`** — Least-squares
   regression from a formula string (`"Y ~ X1 + X2"`): estimates,

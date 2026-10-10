@@ -12,7 +12,7 @@
 import numpy as np
 import pandas as pd
 
-from .utils import fmt, get_column, get_option
+from .utils import fmt, get_column, get_option, show_plots
 
 
 class CorrelationResults:
@@ -222,7 +222,7 @@ def _matrix(df, miss, show, method, digits_d, heat_map, main):
     if heat_map:
         plots["heatmap"] = _heatmap(crs, main)
     crs.attrs["plots"] = plots
-    return crs
+    return show_plots(crs)
 
 
 def _heatmap(df, main):

@@ -29,14 +29,28 @@ def _axis_ref(k, kind):
 
 
 def scatter_matrix(df, fit="lm", digits_d=2, cor_coef=True,
-                   main=None, band=True):
+                   main=None, band=True, form="scatter",
+                   contour_n=None, contour_nbins=50,
+                   contour_points=False, smooth_bins=128,
+                   smooth_power=0.25):
     """Scatterplot matrix of the columns of df, in column order.
     fit: "off" (no line, XY default), "lm" (Regression) or
     "loess". cor_coef=True puts the correlation in the upper
     triangle and the scatter below (~ .plt.mat, Regression);
     cor_coef=False draws the scatter in every off-diagonal cell,
     the symmetric matrix R's Logit uses (logit.4Pred). band adds
-    the fit's 95% confidence band. Returns a plotly Figure."""
+    the fit's 95% confidence band. form="contour" or "smooth"
+    draws each cell as its own kernel density over the cell's
+    range, 8 contour bands unless contour_n is given (a cell cannot
+    resolve the 20 of a single plot), any fit drawn without its
+    band. R analog: .plt.mat() panel.dens. Returns a plotly
+    Figure."""
+    if form not in ("scatter", "contour", "smooth"):
+        raise ValueError(
+            'A matrix renders its cells as form="scatter", "contour", '
+            f'or "smooth", so form="{form}" is not\navailable for a '
+            "matrix.")
+    contour_n = 8 if contour_n is None else int(contour_n)
     cols = list(df.columns)
     n = len(cols)
     if n < 2:
@@ -78,6 +92,17 @@ def scatter_matrix(df, fit="lm", digits_d=2, cor_coef=True,
 
             # scatter in the lower triangle, and also in the
             # upper triangle when no correlations are requested
+            if r != c and (r > c or not cor_coef) \
+                    and form != "scatter":
+                _cell_bg(fig, xr, yr, bg, border)
+                _density_cell(fig, r, c, vals[cols[c - 1]],
+                              vals[cols[r - 1]], rng[cols[c - 1]],
+                              rng[cols[r - 1]], form, contour_n,
+                              contour_nbins, contour_points,
+                              smooth_bins, smooth_power,
+                              fit if do_fit else "off", fit_color,
+                              fit_lwd)
+                continue
             if r != c and (r > c or not cor_coef):
                 _cell_bg(fig, xr, yr, bg, border)
                 _scatter_cell(fig, r, c, vals[cols[c - 1]],
@@ -195,6 +220,53 @@ def _scatter_cell(fig, r, c, xv, yv, fit, do_fit, px,
         hoverinfo="x+y", showlegend=False), row=r, col=c)
 
     if do_fit and len(xv) >= 2:
+        fig.add_trace(go.Scatter(
+            x=xs, y=f, mode="lines",
+            line=dict(color=fit_color, width=fit_lwd),
+            hoverinfo="skip", showlegend=False), row=r, col=c)
+
+
+def _density_cell(fig, r, c, xv, yv, xr, yr, form, contour_n,
+                  contour_nbins, contour_points, smooth_bins,
+                  smooth_power, fit, fit_color, fit_lwd):
+    """One cell as a kernel density over the cell's range: filled
+    contour bands or the smooth shading, then the fit, unbanded.
+    R analog: panel.dens of .plt.mat()"""
+    from .plt_contour import _COLORSCALE, _bw_nrd, _kde2d
+    from .plt_smooth import _RAMP
+    from .XY import _loess, _plt_fit
+
+    ok = np.isfinite(xv) & np.isfinite(yv)
+    xo, yo = xv[ok], yv[ok]
+    if len(xo) < 3 or _bw_nrd(xo) <= 0 or _bw_nrd(yo) <= 0:
+        return
+    lims = (float(xr[0]), float(xr[-1]), float(yr[0]), float(yr[-1]))
+    n_grid = smooth_bins if form == "smooth" else contour_nbins
+    gx, gy, z = _kde2d(xo, yo, n_grid, lims)
+    if form == "smooth":
+        fig.add_trace(go.Heatmap(
+            x=gx, y=gy, z=(z ** smooth_power).T, colorscale=_RAMP,
+            zsmooth="best", showscale=False, hoverinfo="skip"),
+            row=r, col=c)
+    else:
+        lv0, lv1 = float(z.min()), float(z.max())
+        step = (lv1 - lv0) / contour_n
+        fig.add_trace(go.Contour(
+            x=gx, y=gy, z=z.T, colorscale=_COLORSCALE,
+            contours=dict(start=lv0 + step, end=lv1, size=step),
+            line=dict(width=0), showscale=False, hoverinfo="skip"),
+            row=r, col=c)
+        if contour_points:
+            fig.add_trace(go.Scatter(
+                x=xo, y=yo, mode="markers",
+                marker=dict(size=3, color="rgba(0,0,0,0.27)",
+                            line=dict(color="white", width=0.2)),
+                hoverinfo="skip", showlegend=False), row=r, col=c)
+    if fit in ("lm", "loess"):
+        if fit == "loess":
+            xs, _, f, _ = _loess(xo, yo, 2 / 3)
+        else:
+            xs, _, f = _plt_fit(xo, yo, "lm", 1)
         fig.add_trace(go.Scatter(
             x=xs, y=f, mode="lines",
             line=dict(color=fit_color, width=fit_lwd),

@@ -11,7 +11,7 @@
 import numpy as np
 import pandas as pd
 
-from .utils import get_option
+from .utils import get_option, show_plots
 
 
 def corReflect(R, vars, main=None, heat_map=True):
@@ -47,7 +47,7 @@ def corReflect(R, vars, main=None, heat_map=True):
     if heat_map:
         plots["heatmap"] = _heatmap(out, main)
     out.attrs["plots"] = plots
-    return out
+    return show_plots(out)
 
 
 def _heatmap(df, main):

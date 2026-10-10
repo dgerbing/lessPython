@@ -30,7 +30,7 @@ def test_setting_alone_keeps_theme_and_sizes():
     assert get_option("theme") == "darkred"   # only that setting
     assert get_option("axis_size") == 1.2
     style("blue")                             # a theme resets it
-    assert get_option("axis_size") == 0.9
+    assert get_option("axis_size") == 0.80
 
 
 def test_get_and_set_round_trip():

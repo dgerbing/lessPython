@@ -8,7 +8,7 @@
 
 import numpy as np
 
-from .utils import fmt
+from .utils import fmt, show_plots
 
 _FILL_NRM = "#E8E8E8"      # grey91
 _FILL_INT = "#9FB6CD"      # slategray3
@@ -57,8 +57,8 @@ def prob_norm(lo=None, hi=None, mu=0, sigma=1, nrm_color="black",
 
     print(f"Probability:  {prob}")
 
-    return ProbNormResults(prob=prob, lo=lo_v, hi=hi_v, mu=mu,
-                           sigma=sigma, plots={"norm": fig})
+    return show_plots(ProbNormResults(prob=prob, lo=lo_v, hi=hi_v, mu=mu,
+                           sigma=sigma, plots={"norm": fig}))
 
 
 def _plot(lo, hi, lo_lbl, hi_lbl, mu, sigma, prob, nrm_color,

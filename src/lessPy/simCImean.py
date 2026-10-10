@@ -15,7 +15,7 @@
 
 import numpy as np
 
-from .utils import fmt
+from .utils import fmt, show_plots
 
 
 class SimCImeanResults:
@@ -84,12 +84,12 @@ def simCImean(ns=None, n=None, mu=0, sigma=1, cl=0.95, seed=None,
     _report(ns, n, ymean, ysd, se, E, lb, ub, hit, mu, sigma, cl,
             n_miss, miss_rate, miss_only, digits_d)
 
-    return SimCImeanResults(
+    return show_plots(SimCImeanResults(
         mu=mu, sigma=sigma, cl=cl, n_samples=ns, n=n, tcut=tcut,
         ymean=ymean, ysd=ysd, lb=lb, ub=ub, hit=hit,
         n_miss=n_miss, miss_rate=miss_rate,
         mean_of_means=ymean.mean(), sd_of_means=ymean.std(ddof=1),
-        plots={"ci": fig})
+        plots={"ci": fig}))
 
 
 def _plot(ns, n, ymean, E, lb, ub, hit, mu, sigma, cl, data, lo,

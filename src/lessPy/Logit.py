@@ -42,7 +42,7 @@ from .plt_mat_plotly import scatter_matrix
 from .logit_rmd import logit_rmd
 from .Regression import (
     _expand_indicators, _parse_formula, _prntbl)
-from .utils import fmt, get_column, get_option, pretty
+from .utils import fmt, get_column, get_option, pretty, show_plots
 
 
 class LogitResults:
@@ -484,7 +484,7 @@ def Logit(my_formula, data=None, filter=None, ref_group=None,
                   list(data.columns), Rmd, Rmd_data, Rmd_format,
                   Rmd_browser, results, explain, interpret, code)
 
-    return out
+    return show_plots(out)
 
 
 def _logit_confuse(lines, y01, fitv, pc, y_name, lv2_txt,

@@ -11,7 +11,7 @@ import pandas as pd
 from .plotly_utils import (
     axis_format, axis_num, plot_border, plotly_style, to_hex,
     x_grid)
-from .utils import fmt, get_option, pretty
+from .utils import fmt, get_option, pretty, show_plots
 
 
 class corScreeResults:
@@ -54,8 +54,8 @@ def corScree(R, main=None):
         "differences": _scree_plot(
             ev_diff, "Differences of Successive Eigenvalues",
             main)}
-    return corScreeResults(eigenvalues=ev, differences=ev_diff,
-                           plots=plots)
+    return show_plots(corScreeResults(eigenvalues=ev, differences=ev_diff,
+                           plots=plots))
 
 
 def _scree_plot(y, y_lab, main):

@@ -93,8 +93,8 @@ def hs_plotly(x, by=None, x_name=None, by_name=None,
 
     # groups need distinguishable hues: default to the palette
     if fill_miss and G > 1:
-        from .plotly_utils import BASE_COLORS
-        fill = BASE_COLORS
+        from .plotly_utils import by_colors
+        fill = by_colors(G)
 
     # --- counts per bin (right-closed bins, as in R's hist) ---
     def bin_counts(xg):
@@ -299,8 +299,8 @@ def _hs_facet(x, facet, facet_order, x_name, facet_name, breaks,
 
     if fill is None:
         if G > 1:
-            from .plotly_utils import BASE_COLORS
-            fill = BASE_COLORS
+            from .plotly_utils import by_colors
+            fill = by_colors(G)
         else:
             fill = get_option("bar_fill_cont", "#96AAC3")
     if border is None:

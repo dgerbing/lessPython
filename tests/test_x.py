@@ -104,12 +104,14 @@ def test_bw_nrd0_matches_r_formula(d):
     assert bw_nrd0(x) == pytest.approx(want)
 
 
-def test_stat_density_switches_form(d):
-    fig = X("Salary", data=d, stat="density")
-    assert fig.data[1].mode == "lines"     # density curve after
-    assert fig.layout.yaxis.title.text == "Density"  # the faint
-    # background histogram (bar trace drawn first)
-    assert fig.data[0].type == "bar"
+def test_stat_only_for_frequency_forms(d):
+    # stat names a frequency of the binned data (X.R)
+    for form in ("density", "box", "vbs"):
+        with pytest.raises(ValueError, match="plot a frequency"):
+            X("Salary", data=d, form=form, stat="proportion")
+    with pytest.raises(ValueError, match="stat must be"):
+        X("Salary", data=d, stat="density")
+    X("Salary", data=d, form="freq_poly", stat="proportion")
 
 
 def test_facet_histogram(d):
@@ -196,7 +198,7 @@ def test_kind_normal(d):
             show_histogram=False)
     lines = [t for t in fig.data if t.type == "scatter"
              and t.mode == "lines"]
-    assert len(lines) == 1             # normal curve only
+    assert len(lines) == 2             # normal curve + mean line
     area = np.trapezoid(lines[0].y, lines[0].x)
     assert area == pytest.approx(1.0, abs=0.02)
 
@@ -229,11 +231,67 @@ def test_rug_implies_density(d):
 
 
 def test_kind_rug_no_by(d):
-    with pytest.raises(ValueError, match="no by="):
-        X("Salary", by="Gender", data=d, form="density",
-          kind="both")
+    with pytest.raises(ValueError, match="no facet="):
+        X("Salary", by="Gender", facet="Dept", data=d,
+          form="density", kind="both")
     with pytest.raises(ValueError, match="no by="):
         X("Salary", by="Gender", data=d, rug=True)
+
+
+def test_kind_normal_by_groups(d):
+    # dn.plotly.R: a normal per group from its own mean and sd,
+    # dashed in the group's color beside its general curve
+    fig = X("Salary", by="Gender", data=d, form="density",
+            kind="both")
+    nrm = [t for t in fig.data if t.name and t.name.endswith("normal")]
+    assert [t.name for t in nrm] == ["F normal", "M normal"]
+    assert all(t.line.dash == "dash" for t in nrm)
+    assert not any(t.showlegend for t in nrm)
+    w = d.loc[d.Gender == "M", "Salary"]
+    peak = 1 / (w.std(ddof=1) * np.sqrt(2 * np.pi))
+    assert max(nrm[1].y) == pytest.approx(peak, rel=1e-3)
+    # kind="normal": the normal curves alone carry the legend
+    fig = X("Salary", by="Gender", data=d, form="density",
+            kind="normal")
+    leg = [t.name for t in fig.data if t.showlegend]
+    assert leg == ["F", "M"]
+
+
+def test_vbs_letters_any_order(d):
+    a = X("Salary", data=d, form="SV")
+    b = X("Salary", data=d, form="vs")
+    assert len(a.data) == len(b.data)
+    assert X("Salary", data=d, form="b").data[0].type == \
+        X("Salary", data=d, form="box").data[0].type
+    with pytest.raises(ValueError, match="any order and any case"):
+        X("Salary", data=d, form="vv")
+
+
+def test_by_needs_strip_layer(d):
+    for form in ("violin", "box", "vb"):
+        with pytest.raises(ValueError, match="strip layer"):
+            X("Salary", by="Gender", data=d, form=form)
+    X("Salary", by="Gender", data=d, form="bs")
+
+
+def test_violin_takes_bandwidth(d):
+    a = X("Salary", data=d, form="violin", bandwidth=4000)
+    b = X("Salary", data=d, form="violin", bw=4000)
+    c = X("Salary", data=d, form="violin")
+    assert list(a.data[0].x) == list(b.data[0].x)
+    assert list(a.data[0].x) != list(c.data[0].x)
+
+
+def test_freq_poly_cumulate(d):
+    plain = X("Salary", data=d, form="freq_poly")
+    cum = X("Salary", data=d, form="freq_poly", cumulate="on")
+    ys = [t for t in plain.data if t.mode and "lines" in t.mode][0].y
+    yc = [t for t in cum.data if t.mode and "lines" in t.mode][0].y
+    assert list(yc[1:-1]) == list(np.cumsum(ys[1:-1]))
+    assert yc[-1] == yc[-2] == len(d)    # the ogive holds its total
+    assert cum.layout.yaxis.title.text.startswith("Cumulative")
+    with pytest.raises(ValueError, match="does not plot"):
+        X("Salary", data=d, form="density", cumulate="on")
 
 
 # ----- VBS refinements: box_adj / bw_iter / out_cut -------------
@@ -410,7 +468,7 @@ def test_rotate_and_scale_x(d):
             scale_x=(20000, 100000, 5), quiet=True)
     assert fig.layout.xaxis.tickangle == -45
     assert list(fig.layout.xaxis.range) == [20000, 100000]
-    assert len(fig.layout.xaxis.tickvals) == 5
+    assert len(fig.layout.xaxis.tickvals) == 6   # 5 intervals, as R
 
 
 # ----- facet orthogonality (R July 2026 parity) -----------------

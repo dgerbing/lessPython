@@ -56,11 +56,18 @@ def _agg_one(dser, yser, ts_unit, aggfun):
         per = dser
     else:
         per = dser.dt.to_period(_PERIOD_FREQ[ts_unit])
-        # trailing partial period: last date short of period end
+        # trailing partial period: its last date short of the period
+        # end AND fewer observations than the median of the earlier
+        # periods, so data dated at period starts keeps its complete
+        # final period. R analog: ts_truncate() (plt.time.R)
         last_per = per.iloc[int(np.argmax(dser.to_numpy()))]
         if dser.max() < last_per.end_time.normalize():
-            keep = (per != last_per).to_numpy()
-            dser, yser, per = dser[keep], yser[keep], per[keep]
+            n_per = per.value_counts()
+            others = n_per.drop(last_per)
+            n_full = float(np.median(others)) if len(others) else 0
+            if n_per[last_per] < n_full:
+                keep = (per != last_per).to_numpy()
+                dser, yser, per = dser[keep], yser[keep], per[keep]
     if len(dser) == 0:
         return (np.array([], dtype="datetime64[ns]"),
                 np.array([]))

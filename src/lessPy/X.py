@@ -49,13 +49,16 @@ from scipy import stats as sps
 from .dn_plotly import dn_plotly
 from .freq_poly_plotly import freq_poly_plotly
 from .hs_plotly import hs_plotly
-from .plotly_utils import BASE_COLORS, axis_format, font_scaled
+from .plotly_utils import (
+    BASE_COLORS, axis_format, by_colors, font_scaled,
+)
 from .plt_add import plt_add
-from .stats_out import resolve_quiet, x_stats
+from . import x_console as xc
+from .stats_out import CALL_STATS, record_stats, resolve_quiet, x_stats
 from .vbs_plotly import vbs_plotly
 from .utils import (
-    bw_nrd0, category_order, get_column, get_option, pretty,
-    resolve_facet,
+    band_width, category_order, get_column, get_option, pretty,
+    resolve_facet, set_option,
 )
 
 # the VBS family: single-element v/b/s, and the composites. "vb"
@@ -63,7 +66,20 @@ from .utils import (
 # (deprecated) vbs_plot= subset string; here they are just forms.
 _VBS_FORMS = ("violin", "box", "strip", "vb", "vs", "bs", "vbs")
 _FORMS = ("histogram", "freq_poly", "density") + _VBS_FORMS
-_STATS = ("count", "proportion", "density")
+_STATS = ("count", "proportion")
+
+
+def _norm_form(form):
+    """Any one to three of v b s, in any order and any case, names
+    those VBS layers: normalize to the canonical order v b s, a
+    lone letter to the full name of its layer (X.R)."""
+    if isinstance(form, str):
+        ltr = list(form.strip().lower())
+        if (1 <= len(ltr) <= 3 and set(ltr) <= set("vbs")
+                and len(set(ltr)) == len(ltr)):
+            f = "".join(c for c in "vbs" if c in ltr)
+            return {"v": "violin", "b": "box", "s": "strip"}.get(f, f)
+    return form
 
 
 def _breaks_from_args(fx, bin_start, bin_width, bin_end, breaks):
@@ -102,7 +118,7 @@ def _x_finish(fig, rotate_x, rotate_y, scale_x, axis_fmt,
     angles. R analogs: scale_x, rotate_x, rotate_y."""
     if scale_x is not None:
         tv = np.linspace(float(scale_x[0]), float(scale_x[1]),
-                         int(scale_x[2]))
+                         int(scale_x[2]) + 1)   # n intervals, as R
         fig.update_xaxes(
             tickvals=tv,
             ticktext=axis_format(tv, digits_d, axis_fmt,
@@ -117,7 +133,7 @@ def _x_finish(fig, rotate_x, rotate_y, scale_x, axis_fmt,
 
 def X(x, by=None, facet=None, data=None, filter=None,
       form="histogram",
-      stat="count",
+      stat=None,
       fill=None, color=None,
       bin_start=None, bin_width=None, bin_end=None,
       breaks="Sturges",
@@ -142,23 +158,44 @@ def X(x, by=None, facet=None, data=None, filter=None,
       quiet=None):
     """Analytic view of the distribution of one numerical variable,
     optionally grouped (by=). Variables are strings naming columns
-    of the DataFrame `data`. Returns a plotly Figure.
+    of the DataFrame `data`. Returns a plotly Figure, or a list of
+    Figures, one per variable, when x is a list of names.
     """
 
+    form = _norm_form(form)
     if form not in _FORMS:
-        raise ValueError(f"form must be one of {_FORMS}")
-    if stat not in _STATS:
-        raise ValueError(f"stat must be one of {_STATS}")
+        raise ValueError(
+            "form must be one of: "
+            + ", ".join(f'"{f}"' for f in _FORMS) + "\n\n"
+            "Any subset of the violin, box, and strip layers is a "
+            "form, named\nby its letters in any order and any case, "
+            'as in form="vb" or\nform="SV". A single layer may also '
+            'be named in full, as in\nform="violin".')
+    if stat is not None:
+        if stat not in _STATS:
+            raise ValueError(f"stat must be one of {_STATS}")
+        # stat names a frequency of the binned data, which only the
+        # forms that plot a frequency have (X.R)
+        if form not in ("histogram", "freq_poly"):
+            why = ("A density is an area, already scaled to a "
+                   "proportion,\nso a count and a proportion do not "
+                   "distinguish two\ndisplays."
+                   if form == "density" else
+                   f'form="{form}" plots the values themselves and\n'
+                   "the quantiles of their distribution, not a "
+                   "frequency,\nso a count and a proportion do not "
+                   "distinguish two\ndisplays.")
+            raise ValueError(
+                "stat sets the plotted value to a count of the cases\n"
+                "in each bin or to their proportion, so it applies to "
+                "the forms\nthat plot a frequency: form=\"histogram\" "
+                'and\nform="freq_poly".\n\n' + why)
+    else:
+        stat = "count"
     if data is None:
         raise ValueError(
             "data= is required: a pandas DataFrame containing the "
             "named columns")
-    if stat == "density":
-        if form == "freq_poly":
-            stat = "count"  # density is not a freq poly stat (X.R)
-        else:
-            form = "density"    # R analog: X.R stat="density"
-
     if cumulate not in ("off", "on", "both"):
         raise ValueError('cumulate: "off", "on", or "both"')
     if kind not in ("general", "normal", "both"):
@@ -171,16 +208,41 @@ def X(x, by=None, facet=None, data=None, filter=None,
     if cumulate != "off" and (by is not None
                               or facet is not None):
         raise ValueError(
-            "cumulate applies to a single histogram: "
-            "no by= or facet=")
+            "cumulate applies to a single histogram or frequency "
+            "polygon: no by= or facet=")
+    if cumulate != "off" and form not in ("histogram", "freq_poly"):
+        raise ValueError(
+            "cumulate accumulates the bin counts of a histogram or "
+            f'frequency polygon, which form="{form}" does not plot')
     if counts and (by is not None or facet is not None):
         raise ValueError(
             "counts labels apply to a single histogram: "
             "no by= or facet=")
-    if (kind != "general" or rug) and by is not None:
+    if rug and by is not None:
         raise ValueError(
-            "kind and rug draw per-panel curves of a single "
-            "series: no by=")
+            "rug draws the data values of a single series: no by=")
+    if kind != "general" and by is not None and facet is not None:
+        raise ValueError(
+            "kind with by= fits a normal curve to each group of a "
+            "single panel: no facet=")
+    # by overlays the groups within a panel, marked on the points
+    # of the strip layer; a violin or box drawn over another is
+    # not readable, so without a strip there is no layer to carry
+    # the groups, and facet separates them (X.R)
+    vbs_ltr = {"violin": "v", "box": "b",
+               "strip": "s"}.get(form, form)
+    if (form in _VBS_FORMS and by is not None
+            and "s" not in vbs_ltr):
+        raise ValueError(
+            "The groups of by are overlaid within a panel, marked "
+            "on the\npoints of the strip layer, which "
+            f'form="{form}" does\nnot include. A violin or a box '
+            "drawn over another is not\nreadable, so there is no "
+            "layer here to carry the groups.\n\n"
+            "To mark the groups, add the strip layer:\n"
+            f'  X("{x}", by="{by}", form="{vbs_ltr}s")\n\n'
+            f"To draw a separate {form} for each group:\n"
+            f'  X("{x}", facet="{by}", form="{form}")')
     if (out_cut > 0 or box_adj) and form not in _VBS_FORMS:
         raise ValueError(
             "out_cut and box_adj apply to the VBS forms: "
@@ -211,6 +273,18 @@ def X(x, by=None, facet=None, data=None, filter=None,
             "the plotly VBS draws facet levels as bands on one "
             "panel, so n_row and n_col do not apply")
 
+    if isinstance(by, (list, tuple)):
+        raise ValueError(
+            "Only one by variable is permitted, but more than one "
+            f"specified:\n  by = {list(by)}\n\n"
+            "The groups of by are overlaid within the panel, "
+            "distinguished by\ncolor and optionally symbol. That one "
+            "channel is carried by the\nfirst variable, so a second "
+            "has no encoding left by which to\nseparate its levels.\n"
+            "To stratify by a second variable, use facet, which draws "
+            "each of\nits groups in a panel of its own.")
+
+    data_in = data                     # the caller's, for suggestions
     if filter is not None:
         data = data.query(filter)
 
@@ -223,6 +297,15 @@ def X(x, by=None, facet=None, data=None, filter=None,
     by_ser = get_column(data, by, "by") if by is not None else None
     (facet_ser, facet_name,
      facet2_ser, facet2_name) = resolve_facet(data, facet, "X")
+
+    # before casewise deletion: the one-variable summary counts the
+    # missing values of x, the panel table those within each panel
+    x_raw = x_ser.to_numpy(dtype=float)
+    grp_ok = ~pd.concat([s for s in (by_ser, facet_ser, facet2_ser)
+                         if s is not None] or [x_ser.notna()],
+                        axis=1).isna().any(axis=1).to_numpy()
+    by_raw = by_ser.to_numpy() if by_ser is not None else None
+    f_raw = facet_ser.to_numpy() if facet_ser is not None else None
 
     used = [s for s in (x_ser, by_ser, facet_ser, facet2_ser)
             if s is not None]
@@ -240,26 +323,60 @@ def X(x, by=None, facet=None, data=None, filter=None,
     if len(fx) == 0:
         raise ValueError(f"'{x}' has no finite values")
 
-    if not resolve_quiet(quiet):       # accompanying statistics
-        print("\n".join(x_stats(
-            x_ser.to_numpy(dtype=float), x,
-            2 if digits_d is None else digits_d)))
-        if form == "density" and kind in ("normal", "both"):
-            if 2 < len(fx) < 5000:     # R dn.main.R range
-                W, p = sps.shapiro(fx)
-                from .stats_out import record_stats
-                record_stats(shapiro_W=float(W), shapiro_p=float(p))
-                print("\nNull hypothesis is a normal population")
-                print("Shapiro-Wilk normality test:  "
-                      f"W = {W:.4f},  p-value = {p:.4f}")
-            else:
-                print("\nSample size out of range for the "
-                      "Shapiro-Wilk normality test")
+    # the statistics for fig.stats; the console report, ports of
+    # R's printers (x_console), follows the display it accompanies
+    x_stats(x_ser.to_numpy(dtype=float), x,
+            2 if digits_d is None else digits_d)
+    show = not resolve_quiet(quiet)
+    pre, dname = xc.call_names(data_in)
+    x_lbl = ((getattr(data_in, "attrs", {}) or {})
+             .get("variable_labels", {}) or {}).get(x)
+    # parameters named in the call, which the suggestions skip
+    given = {nm for nm, v in (
+        ("bin_width", bin_width), ("bin_start", bin_start),
+        ("bin_end", bin_end), ("out_cut", out_cut or None),
+        ("fences", fences or None), ("vbs_mean", vbs_mean or None),
+        ("box_adj", box_adj or None)) if v is not None}
+
+    def say(*comps):
+        if show:
+            print(xc.report(*comps))
+
+    def one_var(sug):
+        """suggestions, summary, outliers: the single-group report"""
+        return [sug, xc.ss_numeric(x_raw, x, x_lbl, digits_d),
+                xc.outliers(fx, 2)]
+
+    def panel_table():
+        """the statistics of each panel (one facet variable)"""
+        ok = grp_ok
+        cells = f_raw[ok].astype(str)
+        name = facet_name
+        d = 2
+        if by_raw is not None:
+            cells = np.char.add(np.char.add(cells, ", "),
+                                by_raw[ok].astype(str))
+            name = f"{facet_name}, {by}"
+            d = max(xc.max_dd(fx) + 1, 2) if digits_d is None \
+                else digits_d
+        return xc.facet_table(x_raw[ok], cells, x, name, d)
+
+    def bins(edges):
+        cnt = pd.cut(pd.Series(fx), edges, right=True,
+                     include_lowest=True).value_counts(sort=False)
+        return xc.bin_table(edges, cnt.to_numpy(), len(fx),
+                            xc.max_dd(fx) if digits_d is None
+                            else digits_d)
 
     # ----- violin / box / strip (VBS) ----------------------------
     if form in _VBS_FORMS:
         vbs_plot = {"violin": "v", "box": "b",
                     "strip": "s"}.get(form, form)
+        # the violin's smoothing is bw, the density curve's is
+        # bandwidth; both name the same quantity, so a bandwidth
+        # given without a bw is honored here (X.R)
+        if bw is None and bandwidth is not None:
+            bw = bandwidth
         fin = np.isfinite(x_ser.to_numpy(dtype=float))
         by_arr = by_order = None
         facet_arr = facet_order = None
@@ -281,8 +398,7 @@ def X(x, by=None, facet=None, data=None, filter=None,
             by_arr = by_ser.to_numpy()[fin]
             by_order = category_order(by_ser)
             n_g = len(by_order)
-            pt_fill = [BASE_COLORS[i % len(BASE_COLORS)]
-                       for i in range(n_g)]
+            pt_fill = by_colors(n_g)   # theme's palette, as R
             pt_color = pt_fill
             pt_trans = get_option("trans_pt_fill", 0.10)
         # strip-point colors per vbs_pt_fill, X.R VBS section
@@ -305,7 +421,7 @@ def X(x, by=None, facet=None, data=None, filter=None,
                 get_column(data, ID, "ID")[keep]
                 if ID is not None
                 else x_ser.index).astype(str)[fin]
-        return _x_finish(vbs_plotly(
+        fig = _x_finish(vbs_plotly(
             fx, x_name=x, vbs_plot=vbs_plot,
             by=by_arr, by_order=by_order, by_name=by,
             facet=facet_arr, facet_order=facet_order,
@@ -326,6 +442,49 @@ def X(x, by=None, facet=None, data=None, filter=None,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
         ), rotate_x, rotate_y, scale_x, axis_fmt, axis_x_pre,
             2 if digits_d is None else digits_d)
+
+        # report, ~ .param.VBS() and the pivot tables of X.R, from
+        # the data as read rather than as jittered for the strip
+        prm = CALL_STATS.get() or {}
+        comps = [xc.suggest_vbs(
+            x, pre, dname, given,
+            n_by=len(by_order) if by_order is not None else 0,
+            by_name=by,
+            n_facet=len(facet_order) if facet_order is not None else 0,
+            facet_name=facet_name)]
+        ids_out = (np.asarray(get_column(data, ID, "ID")[keep])
+                   .astype(str)[fin] if ID is not None else None)
+        if by is None and facet is None:
+            comps += [
+                xc.box_summary(fx, x, x_lbl, digits_d, k_iqr=k,
+                               box_adj=box_adj, a=a, b=b),
+                xc.outliers(fx, digits_d, ids=ids_out, k_iqr=k,
+                            box_adj=box_adj, a=a, b=b),
+                xc.dup_values(fx)]
+        elif facet is not None:
+            comps.append(xc.dup_values(fx, facet_arr, facet_order))
+        else:
+            comps.append(xc.dup_values(fx, by_arr, by_order))
+        comps.append(xc.vbs_params(
+            vbs_plot, prm,
+            show_bw=prm.get("bw") is not None))
+        sd = max(xc.max_dd(fx), 2)   # integer data still needs
+        summ = ["", f"---------- Summary Statistics for {x}"]
+        if by is not None:
+            summ += [""] + xc.vbs_summary(fx, by_arr, by, sd,
+                                           order=by_order)
+        if facet_arr is not None:
+            summ += [""] + xc.vbs_summary(fx, facet_arr, facet_name,
+                                           sd, order=facet_order)
+        if facet2_arr is not None:
+            summ += [""] + xc.vbs_summary(fx, facet2_arr,
+                                           facet2_name, sd,
+                                           order=facet2_order)
+        if by is None and facet is None:
+            summ += [""] + xc.vbs_summary(fx, None, x, sd)
+        comps.append(summ)
+        say(*comps)
+        return fig
 
     # facet for histogram/density: aligned array + level order
     facet_arr = (facet_ser.to_numpy()
@@ -350,13 +509,14 @@ def X(x, by=None, facet=None, data=None, filter=None,
     if form == "freq_poly":
         edges = _breaks_from_args(fx, bin_start, bin_width,
                                   bin_end, breaks)
-        return _x_finish(freq_poly_plotly(
+        fig = _x_finish(freq_poly_plotly(
             x_ser, by=by_ser, x_name=x, by_name=by,
             facet=facet_arr, facet_order=f_order,
             facet_name=facet_name,
             facet2=facet2_arr, facet2_order=f2_order,
             facet2_name=facet2_name,
             breaks=edges, proportion=stat == "proportion",
+            cumulate=cumulate != "off",
             fill=fill,
             fill_area=area_fill not in ("off", "transparent"),
             x_lab=x if xlab is None else xlab, y_lab=ylab,
@@ -366,12 +526,22 @@ def X(x, by=None, facet=None, data=None, filter=None,
             digits_d=3 if digits_d is None else digits_d,
         ), rotate_x, rotate_y, scale_x, axis_fmt, axis_x_pre,
             3 if digits_d is None else digits_d)
+        if facet_ser is not None:
+            if facet2_ser is None:
+                say(panel_table())
+        elif by_ser is not None:       # X.R: summary and outliers
+            say(*one_var(None)[1:])
+        else:
+            say(*one_var(xc.suggest_freq_poly(x, pre, dname, given)),
+                bins(edges))
+        return fig
 
     # ----- density ---------------------------------------------
     if form == "density":
-        bw = bandwidth if bandwidth is not None else bw_nrd0(fx)
+        # lessR's .band.width(): bw.nrd0 widened toward one peak
+        bw = bandwidth if bandwidth is not None else band_width(fx, 25)
         show_h = show_histogram and by is None
-        return _x_finish(dn_plotly(
+        fig = _x_finish(dn_plotly(
             x_ser, by=by_ser, x_name=x, by_name=by,
             facet=facet_arr, facet_order=f_order,
             facet_name=facet_name,
@@ -395,6 +565,30 @@ def X(x, by=None, facet=None, data=None, filter=None,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
         ), rotate_x, rotate_y, scale_x, axis_fmt, axis_x_pre,
             3 if digits_d is None else digits_d)
+        if facet_ser is not None:
+            if facet2_ser is None:
+                say(panel_table())
+        elif by_ser is not None:
+            say(xc.by_table(x_ser.to_numpy(dtype=float),
+                            by_ser.to_numpy(), x, by, pre, dname,
+                            order=category_order(by_ser)))
+        else:                          # dn.main.R
+            st = [f"--- Bandwidth ---      for general curve: "
+                  f"{bw:.4f}", ""]
+            if kind in ("normal", "both"):
+                if 2 < len(fx) < 5000:
+                    W, p = sps.shapiro(fx)
+                    record_stats(shapiro_W=float(W),
+                                 shapiro_p=float(p))
+                    st += [" ", "Null hypothesis is a normal population",
+                           f"Shapiro-Wilk normality test:  W = {W:.4f},"
+                           f"  p-value = {p:.4f}"]
+                else:
+                    st.append("Sample size out of range for "
+                              "Shapiro-Wilk normality test.")
+            sug, ss, otl = one_var(xc.suggest_density(x, pre, dname))
+            say(sug, st, ss, otl)
+        return fig
 
     # ----- histogram ---------------------------------------------
     edges = _breaks_from_args(fx, bin_start, bin_width, bin_end,
@@ -421,10 +615,49 @@ def X(x, by=None, facet=None, data=None, filter=None,
               axis_x_pre, 2 if digits_d is None else digits_d)
     if add is not None:
         plt_add(fig, add, x1=x1, x2=x2, y1=y1, y2=y2)
+    if facet_ser is not None:
+        if facet2_ser is None:         # as .bar.lattice()
+            say(panel_table())
+    elif by_ser is not None:
+        say(xc.by_table(x_ser.to_numpy(dtype=float), by_ser.to_numpy(),
+                        x, by, pre, dname,
+                        order=category_order(by_ser)))
+    else:
+        say(*one_var(xc.suggest_hist(x, pre, dname, given)),
+            bins(edges))
     return fig
+
+
+def _per_variable(func):
+    """A list of x variables is one display per variable, as in R,
+    returned as a list of Figures; suggestions are not repeated for
+    each, as R gives none for several variables."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        xs = kwargs["x"] if "x" in kwargs else (args[0] if args
+                                                else None)
+        if not isinstance(xs, (list, tuple)):
+            return func(*args, **kwargs)
+        sug = get_option("suggest", True)
+        set_option("suggest", False)
+        try:
+            figs = []
+            for xi in xs:
+                if "x" in kwargs:
+                    figs.append(func(*args, **{**kwargs, "x": xi}))
+                else:
+                    figs.append(func(xi, *args[1:], **kwargs))
+            return figs
+        finally:
+            set_option("suggest", sug)
+
+    return wrapper
 
 
 # font_size= scales all text of the returned figure
 from .stats_out import attach_stats as _attach_stats  # noqa: E402
 from .style import with_theme as _with_theme  # noqa: E402
-X = font_scaled(_attach_stats(_with_theme(X), capture=True))
+X = _per_variable(font_scaled(_attach_stats(_with_theme(X),
+                                            capture=True)))

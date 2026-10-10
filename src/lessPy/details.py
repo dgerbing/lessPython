@@ -129,6 +129,11 @@ def details(data=None, n_mcut=1, max_lines=30, miss_show=30,
 
     names = list(data.columns)
     types = [_type_label(data[c]) for c in names]
+    # whole numbers that pandas stores as float64 (a pandas integer
+    # column cannot hold NaN): reported as integer, as lessR does,
+    # but flagged so the report states what pandas actually stores
+    stored_float = [t == "integer" and pdt.is_float_dtype(data[c].dtype)
+                    for c, t in zip(names, types)]
     n_val = [int(data[c].notna().sum()) for c in names]
     n_miss = [int(data[c].isna().sum()) for c in names]
     n_uniq = [int(data[c].dropna().nunique()) for c in names]
@@ -137,7 +142,8 @@ def details(data=None, n_mcut=1, max_lines=30, miss_show=30,
     _print_types(types)
     first_last = [_first_last(data[c], n_obs) for c in names]
     maybe_id, id_col = _print_table(names, types, n_val, n_miss,
-                                    n_uniq, first_last, n_var)
+                                    n_uniq, first_last, n_var,
+                                    stored_float)
 
     if maybe_id is not None and not var_labels:
         _print_id_note(maybe_id, id_col)
@@ -196,10 +202,13 @@ def _print_types(types):
 
 
 def _print_table(names, types, n_val, n_miss, n_uniq, first_last,
-                 n_var):
+                 n_var, stored_float=None):
+    if stored_float is None:
+        stored_float = [False] * n_var
+    shown = [t + "*" if f else t for t, f in zip(types, stored_float)]
     w_num = max(2, len(str(n_var)))
     w_nam = max(len("Variable"), *(len(x) for x in names))
-    w_typ = max(len("Type"), *(len(t) for t in types))
+    w_typ = max(len("Type"), *(len(t) for t in shown))
     w_val = max(len("Values"), *(len(str(x)) for x in n_val))
     w_mis = max(len("Missing"), *(len(str(x)) for x in n_miss))
     w_uni = max(len("Unique"), *(len(str(x)) for x in n_uniq))
@@ -215,7 +224,7 @@ def _print_table(names, types, n_val, n_miss, n_uniq, first_last,
     maybe_id, id_col = None, 0
     for i in range(n_var):
         print(f"{i + 1:>{w_num}}  {names[i]:<{w_nam}}  "
-              f"{types[i]:<{w_typ}}  {n_val[i]:>{w_val}}  "
+              f"{shown[i]:<{w_typ}}  {n_val[i]:>{w_val}}  "
               f"{n_miss[i]:>{w_mis}}  {n_uniq[i]:>{w_uni}}  "
               f"{first_last[i]}")
         if (n_uniq[i] == n_val[i]
@@ -223,6 +232,10 @@ def _print_table(names, types, n_val, n_miss, n_uniq, first_last,
                                  "character")):
             maybe_id, id_col = names[i], i + 1
     _dash(len(hdr))
+    if any(stored_float):
+        print("* Whole numbers stored by Pandas as float64 (double), "
+              "usually because\n  the column had missing values, NaN, "
+              "which a Pandas integer column\n  cannot hold.")
     return maybe_id, id_col
 
 

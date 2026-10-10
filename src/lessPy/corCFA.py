@@ -19,7 +19,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .utils import fmt, get_option
+from .utils import fmt, get_option, show_plots
 
 
 def _mimm(R, cuts, NItems, NF, Iter):
@@ -203,10 +203,10 @@ def corCFA(R, model=None, factors=None, min_cor=0.10,
     plots = {}
     if heat_map:
         plots["heatmap"] = _cfa_heatmap(Rout, items, fcols)
-    return corCFAResults(
+    return show_plots(corCFAResults(
         if_cor=if_cor, ff_cor=ff_cor, communalities=commun,
         alpha=alpha, omega=omega, pred=pred, resid=res,
-        plots=plots)
+        plots=plots))
 
 
 def _cfa_text(items, fcols, cuts, alpha, omega, iter, if_cor,

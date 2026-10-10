@@ -63,7 +63,10 @@ from .plt_forecast import plt_forecast
 from .plt_plotly import plt_plotly
 from .plt_smooth import plt_smooth
 from .plt_time import plt_time
+from .sunflower_plotly import sunflower_plotly
 from .plt_mat_plotly import scatter_matrix
+from . import x_console as xc
+from .stats_out import _stat_by_levels
 from .stats_out import (
     facet_summary, md_outliers, resolve_quiet, xy_stats)
 from .plotly_utils import (
@@ -71,12 +74,13 @@ from .plotly_utils import (
     facet_fig, facet_panels, finish_facet,
     get_tick_fmt, legend_style, make_trans, plot_border,
     plotly_style, square_layout, sym_at, to_hex, x_grid,
-    font_scaled)
+    font_scaled, by_colors)
 from .utils import (
-    category_order, get_column, get_option, pretty, resolve_facet,
+    STAT_FUN, STAT_LBL, category_order, get_column, get_option,
+    pretty, resolve_facet,
 )
 
-_FORMS = ("scatter", "smooth", "contour")
+_FORMS = ("scatter", "smooth", "contour", "sunflower")
 _FITS = ("off", "loess", "lm", "ls", "null", "exp", "quad",
          "power", "log")
 
@@ -191,39 +195,217 @@ def _fit_new_table(groups, fit, fit_power, x_new, x_name, y_name,
     return lines
 
 
-def _loess(xv, yv, span):
-    """R-style loess at the sorted x values: local quadratic
-    regression with tri-cube weights, gaussian family, computed
-    exactly at each x (R surface="direct"). Also the SE of fit
-    from the equivalent-kernel rows, as predict(l.ln, se=TRUE).
-    R analog: .plt.fit() loess(y.lv ~ x.lv, span=span)"""
-    od = np.argsort(xv, kind="stable")
-    xs, ys = xv[od], yv[od]
+def _loess_rows(xs, q_pt, span, degree, rw):
+    """The local fit at q_pt as linear operators on y: rows giving
+    the fitted value and the slope there. Tri-cube weights on the
+    floor(n*span) nearest points (times the robustness weights),
+    polynomial of the given degree centered at q_pt.
+    R analog: ehg127() of the loess Fortran"""
     n = len(xs)
-    q = min(n, max(int(span * n), 3))  # points in the window
-    f = np.empty(n)
-    l2 = np.empty(n)                   # ||l_i||^2, for se.fit
-    trL = 0.0                          # trace of the smoother L
-    for i in range(n):
-        d = np.abs(xs - xs[i])
-        h = np.partition(d, q - 1)[q - 1]
-        if span > 1:                   # window widens past data,
-            h *= span ** 0.5           # verified against R loess
-        if h > 0:
-            w = np.clip(1 - (d / h) ** 3, 0, 1) ** 3
-        else:                          # window is exact x ties
-            w = (d == 0).astype(float)
-        nz = np.flatnonzero(w)
-        xc = xs[nz] - xs[i]
-        X = np.column_stack((np.ones(len(nz)), xc, xc * xc))
-        XtW = X.T * w[nz]
-        li = (np.linalg.pinv(XtW @ X) @ XtW)[0]  # equiv. kernel
-        f[i] = li @ ys[nz]
-        l2[i] = li @ li
-        trL += li[np.searchsorted(nz, i)]
-    res = ys - f
-    dof = n - 2 * trL + l2.sum()       # tr[(I-L)'(I-L)]
+    q = min(n, max(int(span * n + 1e-5), degree + 1))
+    d = np.abs(xs - q_pt)
+    h = np.partition(d, q - 1)[q - 1]
+    if span > 1:                       # window widens past data,
+        h *= span ** 0.5               # verified against R loess
+    if h > 0:
+        w = np.clip(1 - (d / h) ** 3, 0, 1) ** 3
+    else:                              # window is exact x ties
+        w = (d == 0).astype(float)
+    w = w * rw
+    nz = np.flatnonzero(w)
+    xc = xs[nz] - q_pt
+    X = np.column_stack([xc ** k for k in range(degree + 1)])
+    XtW = X.T * w[nz]
+    B = np.linalg.pinv(XtW @ X) @ XtW
+    val = np.zeros(n)
+    slope = np.zeros(n)
+    val[nz] = B[0]
+    slope[nz] = B[1]
+    return val, slope
+
+
+def _loess_kd(xs, span, cell=0.2):
+    """Leaf cells of R's kd tree on one sorted x: the bounding box
+    widened by 0.5% each side, a cell split at its median x (moved
+    off ties) while it holds more than floor(n*span*cell) points.
+    Returns (lower, upper, split) per leaf, the split for the walk
+    down the tree. R analog: ehg126(), ehg124()"""
+    n = len(xs)
+    lo, hi = float(xs[0]), float(xs[-1])
+    mu = 0.005 * max(hi - lo, 1e-10 * max(abs(lo), abs(hi)) + 1e-30)
+    fc = int(np.floor(n * span * cell))
+    nodes = []                         # (l, u, vlo, vhi), 1-based
+
+    def build(l, u, vlo, vhi):
+        leaf = (u - l) + 1 <= fc
+        if not leaf:
+            m = (l + u) // 2
+            off = 0
+            while l <= m + off < u:
+                if xs[m + off - 1] == xs[m + off]:
+                    off = -off
+                    if off >= 0:
+                        off += 1
+                else:
+                    m += off
+                    break
+            v = float(xs[m - 1])
+            leaf = v == vlo or v == vhi
+        if leaf:
+            nodes.append((vlo, vhi))
+            return
+        build(l, m, vlo, v)
+        build(m + 1, u, v, vhi)
+
+    build(1, n, lo - mu, hi + mu)
+    return nodes
+
+
+def _loess(xv, yv, span, degree=2, family="gaussian"):
+    """R's default loess at the sorted x values: local fits of the
+    given degree at the vertices of a kd tree, each giving a value
+    and a slope, joined by cubic Hermite interpolation within each
+    cell (surface="interpolate"). family="symmetric" reweights by
+    the bisquare of the residuals over 4 iterations. Also the SE of
+    fit from the rows of the resulting smoother, as predict(l.ln,
+    se=TRUE). span may be given as (span, degree, family).
+    R analog: .plt.fit() loess(y.lv ~ x.lv, span, degree, family)"""
+    if isinstance(span, tuple):
+        span, degree, family = span
+    od = np.argsort(xv, kind="stable")
+    xs, ys = np.asarray(xv, float)[od], np.asarray(yv, float)[od]
+    n = len(xs)
+    cells = _loess_kd(xs, span)
+    verts = sorted({v for c in cells for v in c})
+    rw = np.ones(n)
+    n_iter = 4 if family == "symmetric" else 1
+    for it in range(n_iter):
+        rows = {v: _loess_rows(xs, v, span, degree, rw) for v in verts}
+        L = np.empty((n, n))
+        for i, z in enumerate(xs):
+            for v0, v1 in cells:       # x on a split goes left
+                if z <= v1:
+                    break
+            hh = v1 - v0
+            u = (z - v0) / hh
+            g0, s0 = rows[v0]
+            g1, s1 = rows[v1]
+            L[i] = ((1 - u) ** 2 * (1 + 2 * u) * g0
+                    + u * u * (3 - 2 * u) * g1
+                    + (u * (1 - u) ** 2 * s0 - u * u * (1 - u) * s1) * hh)
+        f = L @ ys
+        res = ys - f
+        if it < n_iter - 1:            # R lowesw(): bisquare weights
+            cmad = 6 * np.median(np.abs(res))
+            if cmad < np.finfo(float).tiny:
+                rw = np.ones(n)
+            else:
+                r = np.abs(res)
+                rw = np.where(r > 0.999 * cmad, 0.0,
+                              np.where(r > 0.001 * cmad,
+                                       (1 - (r / cmad) ** 2) ** 2, 1.0))
+    l2 = (L ** 2).sum(axis=1)
+    dof = n - 2 * np.trace(L) + l2.sum()   # tr[(I-L)'(I-L)]
     return xs, ys, f, np.sqrt(res @ res / dof * l2)
+
+
+_QQ_LAB = {".normal": "Normal Quantiles",
+           ".lognormal": "Lognormal Quantiles",
+           ".exponential": "Exponential Quantiles",
+           ".uniform": "Uniform Quantiles"}
+
+
+def _qq_quantiles(y, key):
+    """Theoretical quantiles, one per value of y in the row order of
+    y (NaN where y is missing): the i-th smallest y pairs with the
+    i-th smallest quantile of the distribution fit by y's moments.
+    R analog: .qq.quantiles() (qq.R)"""
+    y = np.asarray(y, dtype=float)
+    ok = ~np.isnan(y)
+    n = int(ok.sum())
+    if n < 3:
+        raise ValueError(
+            "A q-q chart requires at least 3 non-missing values of y, "
+            f"but only {n} found.")
+    yv = y[ok]
+    m, sd = yv.mean(), yv.std(ddof=1)
+    if sd == 0:
+        raise ValueError(
+            "All values of y are the same, so there is no "
+            "distribution\nto compare against a theoretical "
+            "distribution.")
+    if key == ".lognormal" and (yv <= 0).any():
+        raise ValueError(
+            "A lognormal distribution is defined only for positive "
+            f"values,\nbut y has {(yv <= 0).sum()} value(s) of zero or "
+            "less.\n\nFor data that include zero, consider .exponential")
+    if key == ".exponential" and (yv < 0).any():
+        raise ValueError(
+            "An exponential distribution is defined only for "
+            f"non-negative\nvalues, but y has {(yv < 0).sum()} "
+            "negative value(s).")
+    a = 3 / 8 if n <= 10 else 0.5      # R ppoints()
+    p = (np.arange(1, n + 1) - a) / (n + 1 - 2 * a)
+    if key == ".normal":
+        q = sps.norm.ppf(p, m, sd)
+    elif key == ".lognormal":
+        lg = np.log(yv)
+        q = np.exp(sps.norm.ppf(p, lg.mean(), lg.std(ddof=1)))
+    elif key == ".exponential":
+        q = -m * np.log1p(-p)
+    else:
+        q = m - np.sqrt(3) * sd + p * 2 * np.sqrt(3) * sd
+    out = np.full(len(y), np.nan)
+    rk = np.empty(n, dtype=int)        # rank, ties.method="first"
+    rk[np.argsort(yv, kind="stable")] = np.arange(n)
+    out[ok] = q[rk]
+    return out
+
+
+def _qq_reference(fig, fit_color, fit_lwd):
+    """The 45-degree reference of a q-q chart in every panel, from
+    the range of that panel's plotted values, drawn beneath the
+    points. R analog: plt.plotly.R qq reference"""
+    panels = {}
+    for tr in fig.data:
+        if tr.type != "scatter" or tr.x is None or tr.y is None:
+            continue
+        key = (tr.xaxis or "x", tr.yaxis or "y")
+        v = np.r_[np.asarray(tr.x, float), np.asarray(tr.y, float)]
+        v = v[np.isfinite(v)]
+        if len(v):
+            lo, hi = panels.get(key, (np.inf, -np.inf))
+            panels[key] = (min(lo, v.min()), max(hi, v.max()))
+    refs = [go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines",
+                       xaxis=xa, yaxis=ya,
+                       line=dict(color=to_hex(get_option(
+                           "fit_color", "#5C4032")
+                           if fit_color is None else fit_color),
+                           width=1.5 if fit_lwd is None else fit_lwd),
+                       showlegend=False, hoverinfo="skip")
+            for (xa, ya), (lo, hi) in panels.items()]
+    k = len(refs)
+    fig.add_traces(refs)
+    fig.data = fig.data[-k:] + fig.data[:-k] if k else fig.data
+    return fig
+
+
+def _ts_ylab(y_name, unit, aggregated, ts_agg):
+    """Default value-axis label of a time series: the aggregation
+    and the time unit, as "Total Sales by Year"; a vector of y
+    (y_name None) is named by its legend, so "Total by Year", and
+    with no aggregation to report either, no label. R analog: the
+    y.lab of .plt.main() for a date x"""
+    if unit in (None, "unknown"):
+        return y_name or ""
+    tu = "days" if unit == "days7" else unit
+    tu = tu[:-1] if tu.endswith("s") else tu
+    agg = (("Total" if ts_agg == "sum" else "Mean")
+           if aggregated else "")
+    if y_name is None and not agg:
+        return ""
+    return " ".join(p for p in (agg, y_name, "by", tu.capitalize())
+                    if p)
 
 
 def _se_band(xs, ys, f, level):
@@ -683,8 +865,7 @@ def _xy_series(x, y, data, x_multi, by, facet, form, n_row,
     elif fill is not None:
         fills = [fill] * k
     else:
-        fills = [BASE_COLORS[i % len(BASE_COLORS)]
-                 for i in range(k)]
+        fills = by_colors(k)           # theme's palette, as R
     if transparency is None:
         transparency = get_option("trans_pt_fill", 0.10)
     if ellipse is True:
@@ -736,13 +917,19 @@ def _ts_facet(xv, yv, facet_arr, facet_order, fill0, border0,
               pt_size, pt_opacity, x_lab, y_lab, main, digits_d,
               area_fill=None, area_split=0,
               facet_name=None, facet2_arr=None,
-              facet2_order=None, facet2_name=None, n_col=1):
+              facet2_order=None, facet2_name=None, n_col=1,
+              by_arr=None, by_order=None, by_name=None,
+              line_width=1.5, frcsts=None, ts_PI=0.95):
     """One time-series panel per facet level on shared axes,
     following the faceted-scatter conventions (_xy_facet):
     first level on the top panel, strip labels. The x axis
     uses plotly's native date ticks, as the single-panel time
     series does. R analog: the lattice cont_cont path for a
-    date x. facet2: the two-facet grid, rows = facet2 levels."""
+    date x. facet2: the two-facet grid, rows = facet2 levels.
+    by: several series per panel in the legend's colors, unfilled
+    unless area_fill is asked for. frcsts: a forecast per panel
+    (panel index -> plt_forecast result), every panel on one scale
+    that holds the prediction intervals."""
     labels, pos, sel, n_row_g, n_col = facet_panels(
         facet_arr, facet_order, facet2_arr, facet2_order,
         facet_name, facet2_name, n_col)
@@ -752,7 +939,12 @@ def _ts_facet(xv, yv, facet_arr, facet_order, fill0, border0,
         px = 5
     mode_pts = "lines+markers" if px > 0 else "lines"
 
-    axT2 = pretty(float(np.nanmin(yv)), float(np.nanmax(yv)))
+    y_all = [np.asarray(yv, float)]
+    for fr in (frcsts or {}).values():
+        y_all += [np.asarray(fr["y_lwr"], float),
+                  np.asarray(fr["y_upr"], float)]
+    y_all = np.concatenate(y_all)
+    axT2 = pretty(float(np.nanmin(y_all)), float(np.nanmax(y_all)))
     fmt2 = get_tick_fmt(axT2, digits_d)
     ax = {"axT1": None, "axL1": None,
           "axT2": axT2,
@@ -768,34 +960,58 @@ def _ts_facet(xv, yv, facet_arr, facet_order, fill0, border0,
         rng_pad = 0.04 * (axT2[-1] - axT2[0])  # panel-clipped
         base = min(max(float(area_split), axT2[0] - rng_pad),
                    axT2[-1] + rng_pad)
+    if by_arr is None:
+        series = [(None, np.ones(len(xv), dtype=bool), fill0,
+                   border0)]
+    else:
+        by_s = np.asarray(by_arr).astype(str)
+        cols = by_colors(len(by_order))
+        series = [(str(lv), by_s == str(lv), cols[g], cols[g])
+                  for g, lv in enumerate(by_order)]
     for i in range(n_f):
-        m = sel[i]
         row, col = pos[i]
-        if area_fill is not None and m.any():
+        for nm, bm, f_c, b_c in series:
+            m = sel[i] & bm
+            if not m.any():
+                continue
+            od = np.argsort(xv[m], kind="stable")
+            xm, ym = xv[m][od], yv[m][od]
+            if area_fill is not None:
+                fig.add_trace(go.Scatter(
+                    x=np.concatenate([xm, xm[-1:], xm[:1]]),
+                    y=np.concatenate([ym, [base, base]]),
+                    mode="none", fill="toself",
+                    fillcolor=area_fill, hoverinfo="skip",
+                    showlegend=False,
+                ), row=row, col=col)
+            hv = hover if nm is None else (
+                f"{by_name}: {nm}<br>" + hover)
             fig.add_trace(go.Scatter(
-                x=np.concatenate([xv[m], xv[m][-1:],
-                                  xv[m][:1]]),
-                y=np.concatenate([yv[m], [base, base]]),
-                mode="none", fill="toself",
-                fillcolor=area_fill, hoverinfo="skip",
-                showlegend=False,
-            ), row=row, col=col)
-        fig.add_trace(go.Scatter(
-            x=xv[m], y=yv[m], mode=mode_pts,
-            marker=(dict(symbol="circle", size=px,
-                         sizemode="diameter",
-                         color=make_trans(fill0, pt_opacity),
-                         opacity=1,
-                         line=dict(color=to_hex(border0),
-                                   width=1))
-                    if "markers" in mode_pts else None),
-            line=dict(color=to_hex(border0), width=1.5),
-            hovertemplate=hover, showlegend=False,
-        ), row=row, col=col)           # first level top-left
+                x=xm, y=ym, mode=mode_pts if line_width > 0
+                else "markers",
+                marker=(dict(symbol="circle", size=px,
+                             sizemode="diameter",
+                             color=make_trans(f_c, pt_opacity),
+                             opacity=1,
+                             line=dict(color=to_hex(b_c), width=1))
+                        if "markers" in mode_pts or line_width <= 0
+                        else None),
+                line=dict(color=to_hex(b_c), width=line_width),
+                name=nm, legendgroup=nm,
+                hovertemplate=hv,
+                showlegend=nm is not None and i == 0,
+            ), row=row, col=col)       # first level top-left
+        if frcsts and i in frcsts:
+            _forecast_traces(fig, frcsts[i], ts_PI, row=row, col=col,
+                             legend=i == min(frcsts))
 
     finish_facet(fig, labels, ax, x_lab, y_lab,
                  gridT1=None, style_opts=style_opts,
                  n_col=n_col, pos=pos)
+    if by_arr is not None or frcsts:
+        fig.update_layout(showlegend=True,
+                          legend=legend_style(by_name, style_opts)
+                          if by_arr is not None else None)
     # ts panels: y spans the data; native date grid on x
     pad = 0.04 * (axT2[-1] - axT2[0])
     fig.update_yaxes(range=[axT2[0] - pad, axT2[-1] + pad])
@@ -880,11 +1096,14 @@ def _run_analysis(yv, digits_d, show_detail):
     lines.append(f"\nTotal number of runs: {n_runs}")
     lines.append("Total number of values that do not equal the "
                  f"median: {n - len(eq)}")
-    if eq:
+    if eq:                             # listed only with show_runs
         if show_detail:
             lines.append("\nValues ignored that equal the median")
             lines += [f"    #{j}  {y[j - 1]:.{dd}f}" for j in eq]
-        lines.append(f"Total number of values ignored: {len(eq)}")
+            lines.append(f"Total number of values ignored: {len(eq)}")
+    else:
+        lines.append("Total number of values ignored that equal the "
+                     "median: 0")
     return m, lines
 
 
@@ -914,7 +1133,8 @@ def _outlier_traces(fig, xv, yv, out_idx, labels, fill0,
                       family="Arial"))
 
 
-def _forecast_traces(fig, frcst, ts_PI):
+def _forecast_traces(fig, frcst, ts_PI, row=None, col=None,
+                     legend=True):
     """Overlay the forecast on the time series display: model-fit
     line, PI band with dotted boundaries, forecast line + points.
     R analog: plt.plotly.R forecast section (~lines 343-451),
@@ -925,6 +1145,16 @@ def _forecast_traces(fig, frcst, ts_PI):
     xf = np.asarray(frcst["x_fit"])    # numpy datetimes: plain
     xh = np.asarray(frcst["x_hat"])    # Timestamps break kaleido
     yf, yh = frcst["y_fit"], frcst["y_hat"]
+    at = {} if row is None else dict(row=row, col=col)
+    _add = fig.add_trace
+
+    def add(tr, **kw):                 # one legend entry per role
+        if not legend:
+            tr.showlegend = False
+        tr.legendgroup = tr.name
+        _add(tr, **at)
+
+    fig = _Adder(fig, add)
     fig.add_trace(go.Scatter(
         x=xf, y=yf, mode="lines",
         line={"color": fit_rgba, "width": 1.5},
@@ -951,6 +1181,12 @@ def _forecast_traces(fig, frcst, ts_PI):
                 "color": fore_rgba},
         line={"color": fore_rgba, "width": 2},
         name="Forecast", showlegend=True))
+
+
+class _Adder:
+    """fig.add_trace routed through a placement function."""
+    def __init__(self, fig, add):
+        self._fig, self.add_trace = fig, add
 
 
 def _ts_fitted_lines(frcst, yv, x_name, y_name, ts_unit, digits_d):
@@ -995,7 +1231,8 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
        ID=None, ID_color="gray50", ID_size=0.6,
        fit="off", fit_power=1, fit_se=None, fit_errors=False,
        fit_new=None,
-       fit_color=None, fit_lwd=None, span=0.75,
+       fit_color=None, fit_lwd=None, fit_span_loess=0.75,
+       fit_degree_loess=2, fit_family_loess="gaussian",
        ellipse=0, ellipse_fill=None, ellipse_color=None,
        ellipse_lwd=None,
        ts_unit=None, ts_agg="sum", ts_stack=False,
@@ -1010,7 +1247,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
        rotate_x=0, rotate_y=0, scale_x=None, scale_y=None,
        xlab=None, ylab=None, main=None, digits_d=None,
        quiet=None,
-       plot_errors=None):
+       plot_errors=None, span=None):
     """Analytic view of the relationship between two numerical
     variables, optionally grouped (by=). A date x displays as a
     time series. Variables are strings naming columns of the
@@ -1034,14 +1271,50 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
            (contour_n, contour_nbins, contour_points,
             contour_legend)):
         form = "contour"
+    contour_n_user = contour_n         # a matrix cell defaults to 8
     contour_n = 20 if contour_n is None else contour_n
     contour_nbins = 50 if contour_nbins is None else contour_nbins
     contour_points = bool(contour_points)
     contour_legend = bool(contour_legend)
+    if pt_shape == "sunflower":        # its earlier route, kept
+        form, pt_shape = "sunflower", "circle"
+    # the form is consulted before by is resolved, so a vector of by
+    # gets the sunflower's own reason (XY.R)
+    if form == "sunflower" and by is not None:
+        raise ValueError(
+            'Parameter by is not available for form="sunflower".\n\n'
+            "A petal count is defined for one set of coordinates, not\n"
+            "separately within each group, so overlaid groups would\n"
+            "interleave their petals at a shared coordinate.\n"
+            "To stratify the same two variables, use facet, which "
+            "draws\neach group in its own panel with its own "
+            "coordinates.")
+    if form == "sunflower" and (isinstance(x, (list, tuple))
+                                or isinstance(y, (list, tuple))):
+        raise ValueError(
+            "The petal count is defined for one set of coordinates, "
+            "not\nseparately for each series, so a vector of x or y "
+            'variables\nis not available for form="sunflower". To '
+            'overlay the series,\nuse form="scatter".')
+    if isinstance(by, (list, tuple)):
+        raise ValueError(
+            "Only one by variable is permitted, but more than one "
+            f"specified:\n  by = {list(by)}\n\n"
+            "The groups of by are overlaid within the panel, "
+            "distinguished by\ncolor and optionally symbol. That one "
+            "channel is carried by the\nfirst variable, so a second "
+            "has no encoding left by which to\nseparate its levels.\n"
+            "To stratify by a second variable, use facet, which draws "
+            "each of\nits groups in a panel of its own.")
     if form != "scatter" and by is not None:
         raise ValueError(
-            'by= is active only for a scatter plot, '
-            'form="scatter"')
+            f'Parameter by is not available for form="{form}".\n\n'
+            f"A {form} plot summarizes the joint density over the "
+            "whole\nplotting region, so summaries superimposed on it "
+            "would obstruct\none another rather than remain "
+            "distinguishable.\nTo stratify the same two variables, "
+            "use facet, which draws\neach group in its own panel with "
+            "its own density.")
     if add is not None and form in ("contour", "smooth"):
         raise ValueError(
             'add is not active for "contour" or "smooth" plots')
@@ -1054,6 +1327,20 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
     if center_line not in ("off", "mean", "median", "zero"):
         raise ValueError(
             'center_line: "off", "mean", "median", or "zero"')
+    if span is not None:
+        raise ValueError(
+            "Parameter span has been renamed to fit_span_loess.\n\n"
+            "It sets the span of a loess fit, so the name now says "
+            "which\nfit it belongs to, alongside fit_degree_loess "
+            "and fit_family_loess.")
+    if fit_degree_loess not in (1, 2):
+        raise ValueError("fit_degree_loess: 1 or 2")
+    if fit_family_loess not in ("gaussian", "symmetric"):
+        raise ValueError('fit_family_loess: "gaussian" or "symmetric"')
+    # the loess settings travel together to every fit (R: loess(...,
+    # span, degree, family) in .plt.fit())
+    span = (float(fit_span_loess), int(fit_degree_loess),
+            fit_family_loess)
     if plot_errors is not None:
         raise ValueError(
             "Parameter plot_errors has been renamed to fit_errors. "
@@ -1091,9 +1378,6 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             raise ValueError(
                 "outlier flagging (MD_cut/out_cut) applies to "
                 'the scatter form, form="scatter"')
-    if ts_unit is not None and facet is not None:
-        raise ValueError(
-            "ts_unit does not yet apply to facet plots")
     if (n_row is not None or n_col is not None) \
             and facet is None:
         raise ValueError("n_row and n_col lay out facet panels: "
@@ -1112,14 +1396,35 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
     if ts_ahead > 0:
         if ts_source not in ("fable", "classic"):
             raise ValueError('ts_source: "fable" or "classic"')
-        if by is not None:
-            raise ValueError(
-                "Can only forecast a single time series, "
-                "so no by=")
-        if facet is not None:
-            raise ValueError(
-                "Can only forecast a single time series, "
-                "so no facet=")
+        if by is not None:             # XY.R: the overlay channel
+            raise ValueError(            # is not available
+                "A forecast draws its fit, prediction interval, and "
+                "forecast\nin the series' own colors, so the overlay "
+                "of by= groups is not\navailable to it. To forecast "
+                "each group, use facet=, which\nforecasts each panel "
+                "on one scale.")
+
+    # for the report: the caller's own names, the parameters named in
+    # the call (which the suggestions skip), the digits as given
+    data_in = data
+    digits_user = digits_d
+    x_call = x                         # as written, keyword included
+    given = {nm for nm, v in (
+        ("enhance", enhance or None), ("fill", fill), ("color", color),
+        ("fit", None if fit == "off" else fit),
+        ("out_cut", out_cut or None), ("MD_cut", MD_cut or None),
+        ("pt_shape", None if pt_shape == "circle" else pt_shape),
+        ("pt_size", None if pt_size == 1 else pt_size),
+        ("line_width", None if line_width == 1.5 else line_width),
+        ("ts_ahead", ts_ahead or None), ("ts_unit", ts_unit),
+        ("ts_agg", None if ts_agg == "sum" else ts_agg),
+        ("ts_seasons", ts_seasons), ("ts_area_fill", ts_area_fill),
+        ("ts_stack", ts_stack or None)) if v is not None}
+    show = not resolve_quiet(quiet)
+
+    def say(*comps):
+        if show:
+            print(xc.report(*comps))
 
     if filter is not None:
         data = data.query(filter)
@@ -1150,16 +1455,106 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         return scatter_matrix(
             mat_df, fit=("off" if fit in ("off", "null")
                          else fit),
-            digits_d=digits_d, main=main)
+            digits_d=digits_d, main=main, form=form,
+            contour_n=contour_n_user,
+            contour_nbins=contour_nbins,
+            contour_points=contour_points, smooth_bins=smooth_bins,
+            smooth_power=smooth_power)
+    # a vector of y on a date x: one series per variable, overlaid
+    # and keyed by name in the legend, drawn as a by= series would
+    # be; the value axis reports only the aggregation and time unit
+    # (XY.R, Aug 2026)
+    if y_multi and not x_multi and isinstance(x, str) \
+            and x in data.columns:
+        xd = data[x]
+        if not pd.api.types.is_datetime64_any_dtype(xd) \
+                and not pd.api.types.is_numeric_dtype(xd):
+            from .date_infer import date_infer as _infer_dates
+            try:
+                xd = _infer_dates(xd)
+            except Exception:
+                pass
+        if pd.api.types.is_datetime64_any_dtype(xd):
+            if by is not None:
+                raise ValueError(
+                    "A vector of y variables overlays its variables as "
+                    "the series of the\nplot, which spends the color "
+                    "dimension that by requires.\nTo display a "
+                    "grouping variable, use facet=, which panels the "
+                    "series.")
+            fcols = ([facet] if isinstance(facet, str) else
+                     list(facet) if isinstance(facet, (list, tuple))
+                     else [])
+            long = data[[x] + fcols + list(y)].copy()
+            long[x] = xd
+            long = long.melt(id_vars=[x] + fcols, value_vars=list(y),
+                             var_name="Series", value_name="Value")
+            long["Series"] = pd.Categorical(long["Series"],
+                                            categories=list(y))
+            if ylab is None:
+                from .plt_time import _infer_unit
+                ylab = _ts_ylab(None, ts_unit if ts_unit is not None
+                                else _infer_unit(long[x].to_numpy()),
+                                ts_unit is not None, ts_agg)
+            fig_l = XY(x, "Value", data=long, by="Series", facet=facet,
+                       ts_unit=ts_unit, ts_agg=ts_agg,
+                       ts_stack=ts_stack, ts_area_fill=ts_area_fill,
+                       ts_area_split=ts_area_split, pt_size=pt_size,
+                       line_width=line_width, n_row=n_row, n_col=n_col,
+                       fill=fill, xlab=xlab, ylab=ylab, main=main,
+                       digits_d=digits_d, quiet=True,
+                       rotate_x=rotate_x, rotate_y=rotate_y)
+            fig_l.update_layout(legend_title_text="")
+            pre_l, dn_l = xc.call_names(data_in)
+            say(xc.suggest_series(
+                pre_l, x, list(y), dn_l, given,
+                "".join(f', {k}="{v}"' if isinstance(v, str)
+                        else f", {k}={v}"
+                        for k, v in (("ts_unit", ts_unit),)
+                        if v is not None), pt_size=pt_size))
+            return fig_l
+
     if x_multi or y_multi:
-        return _apply_rotate(_xy_series(
+        # a vector against a categorical variable is Chart()'s dot
+        # chart, named rather than drawn (XY.R)
+        one = y if x_multi else x
+        if (isinstance(one, str) and one in data.columns
+                and not pd.api.types.is_numeric_dtype(data[one])
+                and not pd.api.types.is_datetime64_any_dtype(
+                    data[one])):
+            vec = x if x_multi else y
+            vec_s = "[" + ", ".join(f"'{v}'" for v in vec) + "]"
+            raise ValueError(
+                "XY() requires a continuous x and a continuous y.\n"
+                f"{one} is categorical.\n\nFor several values at each "
+                f"level of {one}, use Chart()\nwith a vector of y "
+                f"variables:\n  Chart('{one}', y={vec_s}, form='dot')")
+        fig_s = _apply_rotate(_xy_series(
             x, y, data, x_multi, by, facet, form, n_row, n_col,
             fill, transparency, pt_shape, pt_size,
             fit, fit_power, fit_se, fit_lwd, span,
             ellipse, ellipse_fill, ellipse_lwd,
             MD_cut, out_cut,
-            xlab, ylab, main, digits_d, quiet),
+            xlab, ylab, main, digits_d, True),
             rotate_x, rotate_y)
+        # the report: one correlation per plotted variable, each
+        # headed by its name (R overwrote all but the last)
+        pre, dname = xc.call_names(data_in)
+        names = list(x) if x_multi else list(y)
+        other = data[y if x_multi else x]
+        comps = [xc.suggest_scatter(pre, x, y, dname, given)]
+        if (fit in ("off", "lm")
+                and pd.api.types.is_numeric_dtype(other)):
+            for nm in names:
+                xv_ = pd.to_numeric(data[nm], errors="coerce")
+                pair = (xv_, other) if x_multi else (other, xv_)
+                head = (f"Variable: {nm} with {y}" if x_multi
+                        else f"Variable: {x} with {nm}")
+                comps.append(["", head] + xc.cor_block(
+                    pair[0].to_numpy(float), pair[1].to_numpy(float),
+                    nm if x_multi else x, y if x_multi else nm))
+        say(*comps)
+        return fig_s
 
     # ----- row_names: each row label identifies a single case, a
     # categorical axis that belongs to Chart(form="dot")
@@ -1176,21 +1571,18 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             f"  display the values of {cont} directly with Chart():\n"
             f"  Chart('row_names', y='{cont}', form='dot')")
 
-    # stat, sort, and the segments_x/_y droplines served the dot
-    # plot XY() once drew of a categorical variable, now Chart()'s;
-    # R's stat aggregates y within bins of x (n_bins), not ported
+    # sort and the segments_x/_y droplines served the dot plot XY()
+    # once drew of a categorical variable, now Chart()'s
     if stat is not None:
-        cat_, cont = "x", "y"
-        for a, b in ((x, y), (y, x)):
-            if (isinstance(a, str) and isinstance(b, str)
-                    and a in data.columns and b in data.columns
-                    and not pd.api.types.is_numeric_dtype(data[a])):
-                cat_, cont = a, b
-        raise ValueError(
-            "stat in XY() aggregates y within bins of x (n_bins), "
-            "which is not yet ported. For a statistic of a numerical "
-            "variable across the levels of a categorical one, use "
-            f"Chart():\n  Chart('{cat_}', y='{cont}', stat='{stat}')")
+        if stat not in STAT_FUN:
+            raise ValueError("stat must be one of "
+                             + ", ".join(f'"{k}"' for k in STAT_FUN))
+        if (by is not None or facet is not None
+                or isinstance(x, (list, tuple))
+                or isinstance(y, (list, tuple))):
+            raise ValueError(
+                "stat plots one statistic of y at each value of x: "
+                "no by=, facet=, or vector of variables")
     for nm, v in (("sort", None if sort == "0" else sort),
                   ("segments_x", segments_x),
                   ("segments_y", segments_y)):
@@ -1208,10 +1600,40 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
                              index=data.index, name="Index")
         return get_column(data, name, arg)
 
+    # a keyword in the x role names no variable, so it is matched
+    # without regard to case: .index for the run chart, .normal,
+    # .lognormal, .exponential, .uniform for a q-q chart (XY.R)
+    qq_key = None
+    if (isinstance(x, str) and x.startswith(".")
+            and x not in data.columns):
+        key = x.lower()
+        if key == ".index":
+            x = ".Index"
+        elif key in _QQ_LAB:
+            qq_key = key
+        else:
+            raise ValueError(
+                "A name in the x role that begins with a period is a "
+                f"keyword\nfor a generated variable, but {x} is not one "
+                "of\nthe keywords, and is not a variable in the data.\n\n"
+                "Available keywords, matched without regard to case:\n"
+                "  .index  generates the consecutive integers of a run "
+                "chart\n  " + ", ".join(_QQ_LAB) + "  each generates\n"
+                "    the theoretical quantiles of the corresponding "
+                "q-q chart")
+    if qq_key is not None and (isinstance(y, (list, tuple))
+                               or form != "scatter"):
+        raise ValueError(
+            "A q-q chart plots one y variable as a scatterplot "
+            'against its theoretical quantiles: one y, form="scatter"')
+
     index_x = isinstance(x, str) and x == ".Index"
     index_y = isinstance(y, str) and y == ".Index"
-    x_ser = _resolve(x, "x")
     y_ser = _resolve(y, "y")
+    x_ser = (pd.Series(np.nan, index=data.index, name=_QQ_LAB[qq_key])
+             if qq_key is not None else _resolve(x, "x"))
+    if qq_key is not None:
+        x = _QQ_LAB[qq_key]
     if index_x:                 # for axis labels below
         x = "Index"
     if index_y:
@@ -1220,6 +1642,101 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
     by_ser = get_column(data, by, "by") if by is not None else None
     (facet_ser, facet_name,
      facet2_ser, facet2_name) = resolve_facet(data, facet, "XY")
+
+    # q-q: the quantiles of y, regenerated within each group of by
+    # and each panel of facet, so every group reads against its own
+    # distribution; both axes then share one range (XY.R)
+    if qq_key is not None:
+        if not pd.api.types.is_numeric_dtype(y_ser):
+            raise ValueError(
+                "A q-q chart displays the distribution of a continuous "
+                "variable,\nbut the y variable is not numeric.")
+        grp = None
+        for g in (by_ser, facet_ser, facet2_ser):
+            if g is not None:
+                gs = g.astype(str).where(g.notna())
+                grp = gs if grp is None else grp + "\x1f" + gs
+        yv = y_ser.to_numpy(dtype=float)
+        if grp is None:
+            qv = _qq_quantiles(yv, qq_key)
+        else:
+            qv = np.full(len(yv), np.nan)
+            for lv in grp.dropna().unique():
+                i = (grp == lv).to_numpy()
+                if (~np.isnan(yv[i])).sum() >= 3:
+                    qv[i] = _qq_quantiles(yv[i], qq_key)
+        x_ser = pd.Series(qv, index=data.index, name=x)
+        if scale_x is None and scale_y is None:
+            pr = pretty(float(np.nanmin(np.r_[qv, yv])),
+                        float(np.nanmax(np.r_[qv, yv])))
+            scale_x = scale_y = (pr[0], pr[-1], len(pr) - 1)
+
+    # the report (x_console): ports of R's printers, built as the
+    # display is; xy_stats() records the numbers for fig.stats
+    pre, dname = xc.call_names(data_in)
+    _lbls = ((getattr(data_in, "attrs", {}) or {})
+             .get("variable_labels", {}) or {})
+    x_lbl, y_lbl = _lbls.get(x), _lbls.get(y)
+    dd_r = (xc.xy_digits(pd.to_numeric(y_ser, errors="coerce")
+                         .to_numpy(float), digits_user)
+            if not isinstance(y, (list, tuple)) else 3)
+
+    def scatter_report(groups_, fit_stats_, md_lines_):
+        xy_stats(groups_, x, y, fit_stats_, digits_d, by_name=by)
+        if stat_lines is not None:     # R reports the levels alone
+            return [stat_lines]
+        comps = [xc.suggest_scatter(pre, x_call, y, dname, given,
+                                    by=by)]
+        if md_lines_ is not None:
+            comps.append(md_lines_)
+        # correlation for no fit or a linear one, not with by, not
+        # for a q-q chart (.plt.txt)
+        if fit in ("off", "lm") and by is None and qq_key is None:
+            for _, xg, yg in groups_:
+                comps.append(xc.cor_block(xg, yg, x, y, x_lbl, y_lbl))
+        # the fit that enhance= supplies is drawn, not reported (R)
+        if (fit not in ("off", "null") and fit_stats_
+                and not (enhance and "fit" not in given)):
+            comps.append(xc.fit_text(fit_stats_, fit, fit_power, y,
+                                     dd_r, by_name=by))
+        return comps
+
+    def facet_report(xv_s):
+        """XY.R's summary of x per grouping variable; x's own
+        decimals, at least 2, as X() now gives them"""
+        sd = max(xc.max_dd(xv_s), 2)
+        summ = ["", f"---------- Summary Statistics for {x}"]
+        for g, nm in ((by_ser, by), (facet_ser, facet_name),
+                      (facet2_ser, facet2_name)):
+            if g is not None:
+                summ += [""] + xc.vbs_summary(
+                    xv_s, g.to_numpy(), nm, sd,
+                    order=category_order(g))
+        return summ
+
+    # stat: the statistic of y at each value of a continuous x, the
+    # values first reported by level of x (XY.R, .ss.numeric(y, by=x))
+    stat_lines = None
+    if stat is not None:
+        for a_, b_ in ((x, y), (y, x)):
+            if not pd.api.types.is_numeric_dtype(data[a_]):
+                raise ValueError(
+                    "stat in XY() plots a statistic of y at each value "
+                    "of a continuous x. For a statistic of a numerical "
+                    "variable across the levels of a categorical one, "
+                    f"use Chart():\n  Chart('{a_}', y='{b_}', "
+                    f"stat='{stat}')")
+        okx = x_ser.notna()
+        stat_lines = _stat_by_levels(
+            pd.to_numeric(y_ser[okx]), x_ser[okx], y, x,
+            max(xc.max_dd(y_ser.to_numpy(float)) + 1, 2))
+        agg = (pd.to_numeric(y_ser[okx]).groupby(x_ser[okx])
+               .agg(STAT_FUN[stat]).dropna())
+        data = pd.DataFrame({x: agg.index.to_numpy(float),
+                             y: agg.to_numpy(float)})
+        x_ser, y_ser = data[x], data[y]
+        if ylab is None:
+            ylab = f"{STAT_LBL[stat]} of {y}"
 
     # facet needs a categorical variable; a numeric one with more
     # than 25 distinct values is almost surely continuous, so stop
@@ -1346,10 +1863,18 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             "(date x)")
 
     # ----- ts aggregation (ts_unit/ts_agg) --------------------------
-    if is_date and ts_unit is not None:
+    # facets aggregate within each panel, below
+    ts_agg_done = is_date and ts_unit is not None and facet_ser is None
+    if ts_agg_done:
         x_ser, y_ser, by_ser, ts_unit = plt_time(
             x_ser, y_ser, by_ser, ts_unit, ts_agg,
             quiet=resolve_quiet(quiet))
+    if is_date and ylab is None and facet_ser is None:  # a given
+        # ylab names the axis
+        from .plt_time import _infer_unit
+        ylab = _ts_ylab(
+            y, ts_unit if ts_unit is not None
+            else _infer_unit(x_ser.to_numpy()), ts_agg_done, ts_agg)
     if is_date and (ts_stack or ts_area_fill is not None) \
             and pt_size == 1:
         pt_size = 0                    # R: no points with areas
@@ -1377,6 +1902,87 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         add_means = (form in ("scatter", "smooth")
                      and facet is None)
 
+    # ----- sunflower: petals where observations coincide ----------
+    if form == "sunflower":
+        if is_date:
+            raise ValueError(
+                'form="sunflower" plots two continuous variables, '
+                "not a time series")
+        if ellipse is True:
+            ellipse = 0.95
+        f_col = to_hex(get_option("fit_color", "#5C4032")
+                       if fit_color is None else fit_color)
+        f_lwd = get_option("fit_lwd", 2) if fit_lwd is None else fit_lwd
+        e_lvls = ([] if not ellipse else
+                  list(ellipse) if isinstance(ellipse, (list, tuple))
+                  else [ellipse])
+
+        def overlay(fig_, xv_, yv_, row, col):
+            at = {} if row is None else dict(row=row, col=col)
+            for lv in e_lvls:
+                ex, ey = _ellipse_region(xv_, yv_, float(lv))
+                fig_.add_trace(go.Scatter(
+                    x=ex, y=ey, mode="lines",
+                    line=dict(color=to_hex(
+                        get_option("ellipse_color", "gray20")
+                        if ellipse_color is None else ellipse_color),
+                        width=get_option("ellipse_lwd", 1)
+                        if ellipse_lwd is None else ellipse_lwd),
+                    hoverinfo="skip", showlegend=False), **at)
+            if fit not in ("off", "null"):
+                if fit == "loess":
+                    xs_, _, f_, _ = _loess(xv_, yv_, span)
+                else:
+                    xs_, _, f_ = _plt_fit(xv_, yv_, fit, fit_power)
+                fig_.add_trace(go.Scatter(
+                    x=xs_, y=f_, mode="lines",
+                    line=dict(color=f_col, width=f_lwd),
+                    hoverinfo="skip", showlegend=False), **at)
+
+        xv_f = x_ser.to_numpy(dtype=float)
+        yv_f = y_ser.to_numpy(dtype=float)
+        if facet is not None:
+            n_lvl = len(category_order(facet_ser))
+            n_col_sf = (int(n_col) if n_col is not None else
+                        math.ceil(n_lvl / int(n_row)) if n_row
+                        is not None else math.ceil(math.sqrt(n_lvl)))
+            fig = sunflower_plotly(
+                xv_f, yv_f, x if xlab is None else xlab,
+                y if ylab is None else ylab, main,
+                facet=facet_ser.to_numpy(),
+                facet_order=category_order(facet_ser),
+                facet_name=facet_name,
+                facet2=(None if facet2_ser is None
+                        else facet2_ser.to_numpy()),
+                facet2_order=(None if facet2_ser is None
+                              else category_order(facet2_ser)),
+                facet2_name=facet2_name, n_col=n_col_sf,
+                pt_size=pt_size, fill=fill, color=color,
+                overlay=overlay,
+                digits_d=2 if digits_d is None else digits_d,
+                axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+                axis_y_pre=axis_y_pre)
+            xy_stats([(None, xv_f, yv_f)], x, y,
+                     digits_d=2 if digits_d is None else digits_d)
+            say(facet_report(xv_f))
+        else:
+            fig = sunflower_plotly(
+                xv_f, yv_f, x if xlab is None else xlab,
+                y if ylab is None else ylab, main, pt_size=pt_size,
+                fill=fill, color=color, overlay=overlay,
+                digits_d=2 if digits_d is None else digits_d,
+                axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
+                axis_y_pre=axis_y_pre)
+            fs = []
+            if fit not in ("off", "null"):
+                if fit == "loess":
+                    xs_, ys_, f_, _ = _loess(xv_f, yv_f, span)
+                else:
+                    xs_, ys_, f_ = _plt_fit(xv_f, yv_f, fit, fit_power)
+                fs = [(None, fit, ys_, f_, xs_)]
+            say(*scatter_report([(None, xv_f, yv_f)], fs, None))
+        return _apply_rotate(fig, rotate_x, rotate_y)
+
     # ----- facet: one panel per level -----------------------------
     if facet is not None:
         facet2_arr = f2_order = None
@@ -1399,12 +2005,10 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         if form in ("contour", "smooth"):
             if ellipse is True:
                 ellipse = 0.95
-            if not resolve_quiet(quiet):
-                print("\n".join(xy_stats(
-                    [(None, x_ser.to_numpy(dtype=float),
-                      y_ser.to_numpy(dtype=float))], x, y,
-                    digits_d=2 if digits_d is None
-                    else digits_d)))
+            xy_stats([(None, x_ser.to_numpy(dtype=float),
+                       y_ser.to_numpy(dtype=float))], x, y,
+                     digits_d=2 if digits_d is None else digits_d)
+            say(facet_report(x_ser.to_numpy(dtype=float)))
             return _apply_rotate(plt_contour_facet(
                 x_ser.to_numpy(dtype=float),
                 y_ser.to_numpy(dtype=float),
@@ -1434,10 +2038,54 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
                 axis_x_pre=axis_x_pre, axis_y_pre=axis_y_pre),
                 rotate_x, rotate_y)
         if is_date:                    # time-series panels
-            if by is not None:
-                raise NotImplementedError(
-                    "by= with facet= for a time series is not "
-                    "yet ported")
+            # ts_unit aggregates within each panel and group; the
+            # forecast is of each panel's series (XY.R, Aug 2026)
+            f_arr = facet_ser.to_numpy()
+            ts_by = by_ser.to_numpy() if by_ser is not None else None
+            agg_done = ts_unit is not None
+            if agg_done:
+                parts = [s_.astype(str).to_numpy() for s_ in
+                         (facet_ser, facet2_ser, by_ser)
+                         if s_ is not None]
+                key = pd.Series(["\x1f".join(t) for t in zip(*parts)],
+                                index=x_ser.index)
+                xa, ya, ka, ts_unit = plt_time(
+                    x_ser, y_ser, key, ts_unit, ts_agg,
+                    quiet=resolve_quiet(quiet))
+                cols = list(zip(*[str(k).split("\x1f")
+                                  for k in ka.astype(str)]))
+                x_ser, y_ser = xa, ya
+                f_arr = np.asarray(cols[0], dtype=object)
+                ci = 1
+                if facet2_ser is not None:
+                    facet2_arr = np.asarray(cols[ci], dtype=object)
+                    ci += 1
+                if by_ser is not None:
+                    ts_by = np.asarray(cols[ci], dtype=object)
+            f_order = [str(v) for v in category_order(facet_ser)]
+            f_arr = np.asarray(f_arr).astype(str)
+            if ylab is None:
+                from .plt_time import _infer_unit
+                ylab = _ts_ylab(y, ts_unit if ts_unit is not None
+                                else _infer_unit(x_ser.to_numpy()),
+                                agg_done, ts_agg)
+            frcsts = {}
+            if ts_ahead > 0:
+                xs_all = x_ser.to_numpy()
+                ys_all = y_ser.to_numpy(dtype=float)
+                for i_f, lv in enumerate(f_order):
+                    mm = f_arr == lv
+                    if mm.sum() < 4:
+                        continue
+                    od = np.argsort(xs_all[mm], kind="stable")
+                    frcsts[i_f] = plt_forecast(
+                        xs_all[mm][od], ys_all[mm][od], x, y,
+                        ts_unit=ts_unit, ts_ahead=ts_ahead,
+                        ts_method=ts_method, ts_source=ts_source,
+                        ts_error=ts_error, ts_trend=ts_trend,
+                        ts_seasons=ts_seasons, ts_alpha=ts_alpha,
+                        ts_beta=ts_beta, ts_gamma=ts_gamma,
+                        ts_PI=ts_PI, digits_d=digits_d)
             if transparency is None:
                 transparency = get_option("trans_pt_fill", 0.10)
             fill0 = (get_option("pt_color", "#324E5C")
@@ -1451,7 +2099,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             ts_fig = _ts_facet(
                 x_ser.to_numpy(),
                 y_ser.to_numpy(dtype=float),
-                facet_ser.to_numpy(), category_order(facet_ser),
+                f_arr, f_order,
                 fill0, border0, pt_size, 1 - transparency,
                 x if xlab is None else xlab,
                 y if ylab is None else ylab,
@@ -1460,9 +2108,22 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
                 area_split=float(ts_area_split),
                 facet_name=facet_name, facet2_arr=facet2_arr,
                 facet2_order=f2_order,
-                facet2_name=facet2_name, n_col=n_col_use)
+                facet2_name=facet2_name, n_col=n_col_use,
+                by_arr=ts_by,
+                by_order=(None if by_ser is None else
+                          [str(v) for v in category_order(by_ser)]),
+                by_name=by, line_width=line_width,
+                frcsts=frcsts, ts_PI=ts_PI)
             if ts_n_x_tics is not None:     # date-axis tick count
                 ts_fig.update_xaxes(nticks=int(ts_n_x_tics))
+            if show:
+                for i_f, fr in frcsts.items():
+                    print(f"\n{facet_name}: {f_order[i_f]}")
+                    print("\n".join(fr["report"]))
+                    print("Forecast\n--------")
+                    print(fr["forecast"].to_string(
+                        float_format=lambda v:
+                        f"{v:.{(2 if digits_d is None else digits_d) + 2}f}"))
             return _apply_rotate(ts_fig, rotate_x, rotate_y)
         by_arr = by_order = None
         if by_ser is not None:
@@ -1472,8 +2133,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         if fill is None:
             fills_f = ([get_option("pt_color", "#324E5C")]
                        if n_grp == 1
-                       else [BASE_COLORS[i % len(BASE_COLORS)]
-                             for i in range(n_grp)])
+                       else by_colors(n_grp))
         else:
             fills_f = (list(fill)
                        if isinstance(fill, (list, tuple))
@@ -1489,28 +2149,11 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             else [fit_se]) if lv]
         if ellipse is True:
             ellipse = 0.95
-        if not resolve_quiet(quiet):   # overall relationship
-            dd_s = 2 if digits_d is None else digits_d
-            xv_s = x_ser.to_numpy(dtype=float)
-            print("\n".join(xy_stats(
-                [(None, xv_s, y_ser.to_numpy(dtype=float))],
-                x, y, digits_d=dd_s)))
-            # summary table per grouping variable, ~ XY.R's
-            # .vbs_summary_table pivot block
-            print(f"\n---------- Summary Statistics for {x}")
-            if by_ser is not None:
-                print()
-                print(facet_summary(xv_s, by_ser.to_numpy(),
-                                    by, dd_s))
-            print()
-            print(facet_summary(xv_s, facet_ser.to_numpy(),
-                                facet_name, dd_s))
-            if facet2_ser is not None:
-                print()
-                print(facet_summary(xv_s,
-                                    facet2_ser.to_numpy(),
-                                    facet2_name, dd_s))
-        return _apply_rotate(_xy_facet(
+        xv_s = x_ser.to_numpy(dtype=float)
+        xy_stats([(None, xv_s, y_ser.to_numpy(dtype=float))],
+                 x, y, digits_d=2 if digits_d is None else digits_d)
+        say(facet_report(xv_s))
+        fig_f = _apply_rotate(_xy_facet(
             x_ser.to_numpy(dtype=float),
             y_ser.to_numpy(dtype=float),
             by_arr, by_order,
@@ -1535,6 +2178,9 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             facet2_arr=facet2_arr, facet2_order=f2_order,
             facet2_name=facet2_name, n_col=n_col_use),
             rotate_x, rotate_y)
+        if qq_key is not None:
+            _qq_reference(fig_f, fit_color, fit_lwd)
+        return fig_f
 
     # ----- groups and colors --------------------------------------
     xv = x_ser.to_numpy() if is_date \
@@ -1592,8 +2238,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
     n_grp = len(groups)
     if fill is None:
         fills = ([get_option("pt_color", "#324E5C")] if n_grp == 1
-                 else [BASE_COLORS[i % len(BASE_COLORS)]
-                       for i in range(n_grp)])
+                 else by_colors(n_grp))
     else:
         fills = list(fill) if isinstance(fill, (list, tuple)) \
             else [fill]
@@ -1740,11 +2385,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             axis_fmt=axis_fmt, axis_x_pre=axis_x_pre,
             axis_y_pre=axis_y_pre)
         _apply_rotate(fig, rotate_x, rotate_y)
-        if not resolve_quiet(quiet):
-            print("\n".join(xy_stats(groups, x, y, fit_stats,
-                                     digits_d, by_name=by)))
-            if md_lines is not None:
-                print("\n" + "\n".join(md_lines))
+        say(*scatter_report(groups, fit_stats, md_lines))
         return fig
 
     # ----- forecast (date x, ts_source="classic") -------------------
@@ -1767,7 +2408,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
             frcst["y_lwr"], frcst["y_upr"]] if frcst else []))
     if scale_y is not None:            # explicit y scale
         axT2 = np.linspace(float(scale_y[0]), float(scale_y[1]),
-                           int(scale_y[2]))
+                           int(scale_y[2]) + 1)  # n intervals
     else:
         axT2 = pretty(float(np.nanmin(ys_all)),
                       float(np.nanmax(ys_all)))
@@ -1783,7 +2424,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         if scale_x is not None:        # explicit x scale
             axT1 = np.linspace(float(scale_x[0]),
                                float(scale_x[1]),
-                               int(scale_x[2]))
+                               int(scale_x[2]) + 1)  # n intervals
         else:
             axT1 = pretty(float(np.nanmin(xs_all)),
                           float(np.nanmax(xs_all)))
@@ -1832,9 +2473,7 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
         _apply_rotate(fig, rotate_x, rotate_y)
         if add_means:
             _add_means(fig, xv, yv)
-        if not resolve_quiet(quiet):
-            print("\n".join(xy_stats(groups, x, y, fit_stats,
-                                     digits_d, by_name=by)))
+        say(*scatter_report(groups, fit_stats, md_lines))
         return fig
 
     fig = plt_plotly(
@@ -1911,6 +2550,8 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
 
     if add_means:                      # enhance: mean crosshair
         _add_means(fig, xv, yv)
+    if qq_key is not None:
+        _qq_reference(fig, fit_color, fit_lwd)
 
     if scale_x is not None:            # explicit axis ranges
         fig.update_xaxes(range=[float(scale_x[0]),
@@ -1968,28 +2609,41 @@ def XY(x, y=None, data=None, filter=None, by=None, facet=None,
                     dash="dash"),
                 showlegend=True))
 
+    # the series displays: suggestions (with the forecast report
+    # and table when one is made), the run analysis of a run chart
+    ser_extra = "".join(
+        f", {k}={v!r}" if isinstance(v, str) else f", {k}={v}"
+        for k, v in (("by", by), ("ts_unit", ts_unit),
+                     ("ts_ahead", ts_ahead or None))
+        if v is not None).replace("'", '"')
     if frcst is not None:
         _forecast_traces(fig, frcst, ts_PI)
-        if not resolve_quiet(quiet):
+        if show:
             for ln in frcst["report"]:
                 print(ln)
             if ts_fitted:              # observed vs model-fit table
                 print("\n".join(_ts_fitted_lines(
                     frcst, yv, x, y, ts_unit, digits_d)))
-            print("\nForecast\n--------")
+            say(xc.suggest_series(pre, x, y, dname, given,
+                                  ser_extra, pt_size=pt_size))
+            print("Forecast\n--------")
             print(frcst["forecast"].to_string(
                 float_format=lambda v: f"{v:.{digits_d + 2}f}"))
-    elif not is_date and not resolve_quiet(quiet):
-        print("\n".join(xy_stats(groups, x, y, fit_stats,
-                                 digits_d, by_name=by)))
-        if fit_new is not None and fit in _FIT_NEW_OK:
+    elif is_date:
+        say(xc.suggest_series(pre, x, y, dname, given, ser_extra,
+                              pt_size=pt_size))
+    elif index_x:                      # run chart: R's run analysis
+        if run_lines is None:
+            _, run_lines = _run_analysis(yv, digits_d, False)
+        say(xc.suggest_series(pre, ".Index", y, dname, given,
+                              ser_extra, run=True, pt_size=pt_size),
+            xc.run_summary(yv, dd_r), run_lines[1:])
+    else:
+        say(*scatter_report(groups, fit_stats, md_lines))
+        if fit_new is not None and fit in _FIT_NEW_OK and show:
             print("\n".join(_fit_new_table(
                 groups, fit, fit_power, fit_new, x, y, digits_d)))
-        if run_lines is not None:
-            print("\n".join(run_lines))
-        if md_lines is not None:
-            print("\n" + "\n".join(md_lines))
-        if jitter_x > 0 or jitter_y > 0:
+        if (jitter_x > 0 or jitter_y > 0) and show:
             print("\nSome Parameter values (can be manually set)")
             print("-" * 55)
             print(f"size: {float(pt_size):.2f} "

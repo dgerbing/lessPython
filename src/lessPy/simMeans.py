@@ -16,7 +16,7 @@
 
 import numpy as np
 
-from .utils import fmt
+from .utils import fmt, show_plots
 
 
 class SimMeansResults:
@@ -85,10 +85,10 @@ def simMeans(ns=None, n=None, mu=0, sigma=1, seed=None,
     _report(ns, n, o, ymean, ysd, data, mu, sigma, max_data,
             show_data, digits_d)
 
-    return SimMeansResults(
+    return show_plots(SimMeansResults(
         mu=mu, sigma=sigma, n_samples=ns, n=n, order=o,
         ymean=ymean, ysd=ysd, mean_of_means=ymean.mean(),
-        se=ymean.std(ddof=1), plots={"means": fig})
+        se=ymean.std(ddof=1), plots={"means": fig}))
 
 
 def _plot(ns, ymean, mu, sigma, n, lo, hi, grid, show_title):

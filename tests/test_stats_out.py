@@ -20,10 +20,10 @@ def d():
 def test_xy_correlation(d, capsys):
     XY("Years", "Salary", data=d)
     out = capsys.readouterr().out
-    assert "correlation" in out
-    assert "95% CI" in out
+    assert ">>> Pearson's product-moment correlation" in out
+    assert "95% Confidence Interval for Correlation:" in out
     r = np.corrcoef(d["Years"], d["Salary"])[0, 1]
-    assert f"{r:.3f}" in out
+    assert f"r = {r:.3f}" in out
 
 
 def test_xy_fit_stats(d, capsys):
@@ -32,10 +32,10 @@ def test_xy_fit_stats(d, capsys):
     # the line and its fit as R's .plt.fit() reports them
     assert "  Line: b0 = " in out
     assert "  Linear Model MSE = " in out and "Rsq = " in out
-    # other fits keep their one-line report
+    # loess reports its MSE alone, as R's .plt.txt()
     XY("Years", "Salary", data=d, fit="loess")
     out = capsys.readouterr().out
-    assert 'fit="loess"' in out and "R-squared" in out
+    assert "   Loess Model MSE = " in out and "Pearson" not in out
 
 
 def test_xy_quiet(d, capsys):
@@ -46,10 +46,8 @@ def test_xy_quiet(d, capsys):
 def test_x_summary(d, capsys):
     X("Salary", data=d)
     out = capsys.readouterr().out
-    assert "mean:" in out
-    assert "median:" in out
-    assert "outliers (1.5 IQR):" in out
-    assert f"n: {len(d)}" in out
+    assert "--- Salary ---" in out          # .ss.numeric heading
+    assert "Bin Width:" in out              # .hst.stats table
 
 
 def test_x_quiet(d, capsys):

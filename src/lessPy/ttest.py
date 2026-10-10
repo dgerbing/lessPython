@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from .Regression import _getdigits
-from .utils import fmt, get_column, get_option
+from .utils import fmt, get_column, get_option, show_plots
 
 
 class ttestResults:
@@ -309,14 +309,14 @@ def _two_group(n1, m1, s1, n2, m2, s2, Ynm, Xnm, X1nm, X2nm,
     if graph and from_data:
         plots["two_group"] = _two_group_plot(
             YA, YB, Ynm, X1nm, X2nm, m1, m2, d)
-    return ttestResults(
+    return show_plots(ttestResults(
         kind="two-group", n_total=n1 + n2, digits_d=d,
         group1={"name": X1nm, "n": n1, "mean": m1, "sd": s1},
         group2={"name": X2nm, "n": n2, "mean": m2, "sd": s2},
         mean_diff=m1 - m2, pooled_sd=sw, cohen_d=smd,
         equal_var={"t": tvalue, "df": df, "p_value": pvalue,
                    "se": sterr, "lb": lb, "ub": ub},
-        welch=welch, plots=plots)
+        welch=welch, plots=plots))
 
 
 def _assumptions(YA, YB, X1nm, X2nm, Ynm, n1, n2, v1, v2, df1,
@@ -529,12 +529,12 @@ def _one_group(Y, n, m, s, mu, Ynm, brief, conf_level,
     if graph and from_data:
         plots["one_group"] = _one_group_plot(
             Y, Ynm, m, lb, ub, d, paired)
-    return ttestResults(
+    return show_plots(ttestResults(
         kind="paired" if paired else "one-group", n_total=n,
         digits_d=d, n=n, mean=m, sd=s, mu=mu,
         infer={"t": tvalue, "df": df, "p_value": pvalue,
                "se": sterr, "lb": lb, "ub": ub},
-        cohen_d=cohen, plots=plots)
+        cohen_d=cohen, plots=plots))
 
 
 def _needed_1(Edesired, conf_level, s, E, n, d):

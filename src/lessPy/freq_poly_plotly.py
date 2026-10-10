@@ -48,6 +48,7 @@ def freq_poly_plotly(x, by=None, x_name=None, by_name=None,
                      facet2=None, facet2_order=None,
                      facet2_name=None,
                      breaks=None, proportion=False,
+                     cumulate=False,
                      fill=None, fill_area=True,
                      x_lab=None, y_lab=None, main=None,
                      n_col=1, axis_fmt="K", axis_x_pre="",
@@ -65,6 +66,8 @@ def freq_poly_plotly(x, by=None, x_name=None, by_name=None,
     if y_lab is None:
         y_lab = (f"Proportion of {x_name}" if proportion
                  else f"Count of {x_name}")
+        if cumulate:
+            y_lab = f"Cumulative {y_lab}"
 
     if facet is not None:
         return _fp_facet(x, facet, facet_order, x_name,
@@ -90,8 +93,8 @@ def freq_poly_plotly(x, by=None, x_name=None, by_name=None,
     # groups need distinguishable hues: default to the palette
     if fill is None:
         if G > 1:
-            from .plotly_utils import BASE_COLORS
-            fill = BASE_COLORS
+            from .plotly_utils import by_colors
+            fill = by_colors(G)
         else:
             fill = get_option("bar_fill_cont", "#96AAC3")
 
@@ -107,6 +110,8 @@ def freq_poly_plotly(x, by=None, x_name=None, by_name=None,
         xg = x if by is None else x[(by == gname).to_numpy()]
         xg = xg[np.isfinite(xg)]
         yv = _poly_counts(xg, breaks, proportion)
+        if cumulate:                   # running total over the bins
+            yv = np.cumsum(yv)
         polys.append(yv)
         ymax = max(ymax, float(yv.max()))
 
@@ -133,7 +138,9 @@ def freq_poly_plotly(x, by=None, x_name=None, by_name=None,
     for g, gname in enumerate(groups):
         xx = np.concatenate([[mids[0] - step], mids,
                              [mids[-1] + step]])
-        yy = np.concatenate([[0], polys[g], [0]])
+        # a cumulative polygon (ogive) holds its total at the right
+        yy = np.concatenate([[0], polys[g],
+                             [polys[g][-1] if cumulate else 0]])
         hover = [
             (f"{x_name}: {xv:.6g}"
              f"<br>{y_lab}: {round(float(yv), digits_d):g}")
@@ -221,8 +228,8 @@ def _fp_facet(x, facet, facet_order, x_name, facet_name, breaks,
 
     if fill is None:
         if G > 1:
-            from .plotly_utils import BASE_COLORS
-            fill = BASE_COLORS
+            from .plotly_utils import by_colors
+            fill = by_colors(G)
         else:
             fill = get_option("bar_fill_cont", "#96AAC3")
 

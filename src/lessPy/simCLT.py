@@ -21,7 +21,7 @@
 
 import numpy as np
 
-from .utils import fmt
+from .utils import fmt, show_plots
 
 _GHOST = "#F8F8FF"
 _STEEL = "#A2B5CD"          # lightsteelblue3
@@ -110,12 +110,12 @@ def simCLT(ns=None, n=None, p1=0, p2=1, seed=None, dist="normal",
     _report(dist, mu, sigma, skew, med, ns, n, mx, sx, ymean,
             q_units, q_se, digits_d, n_display, by_rep)
 
-    return SimCLTResults(
+    return show_plots(SimCLTResults(
         dist=dist, mu=mu, sigma=sigma, skew=skew, median=med,
         n_samples=ns, n=n, data_mean=mx, data_sd=sx,
         mean_of_means=ymean.mean(), sd_of_means=ymean.std(ddof=1),
         range_units=q_units, range_se=q_se, ymean=ymean, ysd=ysd,
-        plots={"population": fig_pop, "sampling": fig_samp})
+        plots={"population": fig_pop, "sampling": fig_samp}))
 
 
 # --- population sampling -------------------------------------------

@@ -12,7 +12,7 @@
 
 import numpy as np
 
-from .utils import fmt
+from .utils import fmt, show_plots
 
 
 class SimFlipsResults:
@@ -57,10 +57,10 @@ def simFlips(n=None, prob=0.5, seed=None, show_title=True,
     print(f"Sample mean after {n} flips: {fmt(ybar[-1], 3)}")
     print()
 
-    return SimFlipsResults(
+    return show_plots(SimFlipsResults(
         n=n, prob=prob, flips=flips, running_mean=ybar,
         n_heads=n_heads, n_tails=n_tails, final_mean=ybar[-1],
-        plots={"flips": fig})
+        plots={"flips": fig}))
 
 
 def _plot(n, flips, ybar, prob, grid, show_flips, show_title,

@@ -1187,3 +1187,160 @@ for visual output (Cars93).
           labels are now the theme's axis_text_color (#333333 for
           the default, was #262626).
 
+
+41. **X() revision parity — in progress** (October 2026).
+    lessR's X() was revised Aug–Sep 2026 (NEWS.md 4.5.7) after the
+    July port. Already matching before this pass: faceted histogram,
+    density, and freq_poly share one set of bins; VBS by-groups
+    differ by color only (pt_shape= sets shapes); by= + facet=
+    overlays per panel; X() takes sub= (font_scaled wrapper).
+    - [x] form= letters: any one to three of v b s, any order and
+          case ("SV" = "vs"), a lone letter = its layer ("b" =
+          "box"); R's message for anything else.
+    - [x] stat= only for the frequency forms (histogram, freq_poly),
+          R's two messages (density / value forms). stat now
+          defaults to None so a given value is detected; "density"
+          is no longer a stat (R's stat is count/proportion only).
+    - [x] by= refused for violin, box, vb (no strip layer to carry
+          the groups), R's message naming the strip form and facet=.
+    - [x] violin takes bandwidth= when bw= is not given (X.R).
+    - [x] kind="normal"/"both" with by= (dn.plotly.R): a normal per
+          group from its own mean and sd, in the group color,
+          dashed beside the general curve; with kind="normal" the
+          normal curves carry the legend; the mean line drops to
+          whichever curve is drawn (now also for a single
+          kind="normal" curve, as R). by= + facet= with kind raises.
+    - [x] cumulate= on freq_poly draws the cumulative polygon
+          (ogive, holding its total at the right end). NOTE: lessR's
+          plotly freq_poly ignores cumulate (only the base display
+          draws it) - a lessR defect. cumulate on other non-
+          histogram forms now raises instead of being ignored.
+    - [x] console output (x_console.py), ports of R's printers:
+          .ss.numeric one-variable table (missing counted before
+          casewise deletion), .bx.stats outliers and VBS statistics
+          (Tukey hinges, medcouple skew), .hst.stats bin table,
+          dn.main bandwidth + Shapiro-Wilk, the by= table of .ss.pivot
+          (pivot's .decdig rounding, R's 7-significant-digit print)
+          with the ttest() pointer for two groups, the panel table
+          (.ss.numeric by cells, by + facet as "Plan, Gender"), and
+          .param.VBS duplicated values / Parameter values with the
+          .vbs_summary_table tables. Variable labels from data.attrs
+          head the tables. Line-identical to R on 27 of 30 cases
+          (Employee: Salary, Years, Pre, Salary/7 to 3 decimals), the
+          other 3 deliberate; 10 kept as golden tests
+          (tests/test_x_console.py). Deliberate: jitter_y reports
+          lessPy's own scale; facets print no single bw (each panel
+          has its own violin bandwidth); faceted density/freq_poly
+          print the panel table (R prints nothing); the single
+          freq_poly prints the histogram's report (R's comes from its
+          XY() delegation: XY suggestions, and "No (Box plot)
+          outliers" though there is one).
+    - [x] suggestions (>>> Suggestions, style(suggest=False) turns
+          them off), written as runnable Python: the caller's own
+          names for the module and the DataFrame (call_names: "lp."
+          / "" and "d" by default), ttest()/ANOVA() as formula strings.
+    - [x] density bandwidth default is now lessR's .band.width()
+          (bw.nrd0 widened toward one peak, up to 25 times), not plain
+          bw.nrd0. VBS: bandwidth from the data before jitter, and
+          with by + facet the point size follows the facet groups,
+          both as .param.VBS().
+    - [x] list x: one display per variable, a list of Figures, no
+          suggestions (R gives none for several); a list by= raises
+          R's channel message.
+    - lessR defects found (not ported): stat="proportion" prints a
+      bin table of zeros (.hst.stats tabulates the proportions as
+      counts); the panel table's digits follow whatever .ss.numeric
+      last set (2 for facet alone, 3 with by).
+
+42. **XY() revision parity — done** (October 2026). lessR's XY()
+    revisions of Aug–Sep 2026 (NEWS.md 4.5.7):
+    - [x] loess as R fits it: surface="interpolate" (kd tree on x,
+          cells split at the median until floor(n*span*0.2) points,
+          value and slope fit at each vertex, cubic Hermite between),
+          fit_degree_loess (1, 2) and fit_family_loess ("gaussian",
+          "symmetric": 4 bisquare iterations as lowesw). MSE and
+          fitted values identical to R on 4 settings. span renamed
+          fit_span_loess (span= raises R's rename message). The SE
+          band keeps the exact delta1 (R's default is approximate).
+    - [x] keywords in x matched without case: .index; and the q-q
+          chart .normal/.lognormal/.exponential/.uniform (qq.R:
+          ppoints, moments of y, rank pairing, regenerated per by and
+          facet group), equal axis scales, the 45-degree reference in
+          every panel; no correlation reported. Quantiles = R's.
+    - [x] stat= with a continuous x: the statistic of y at each value
+          of x, R's .ss.numeric by-levels table (identical to R);
+          categorical x still points to Chart().
+    - [x] time series: default value axis "Total Sales by Year"
+          (Mean, Price by Month with no aggregation; a vector of y
+          "Total by Year" or none), a given ylab wins; the complete
+          final period of data dated at period starts is kept
+          (ts_truncate: dropped only if short of the period end AND
+          fewer observations than the median period); ts_unit with
+          facet (aggregated per panel and group); facet with ts_ahead
+          (a forecast per panel, one scale holding the PIs, report per
+          panel); by with facet (series per panel, one legend); a
+          vector of y on a date x overlaid as by series, legend keyed
+          by name; by with ts_ahead refused naming facet.
+    - [x] scatterplot matrix form="contour"/"smooth": per-cell
+          kernel density over the cell range, 8 bands unless
+          contour_n, fit unbanded (.plt.mat panel.dens). Was silently
+          drawn as scatter.
+    - [x] form="sunflower" (sunflower_plotly.py, a design: R is
+          base/lattice only): a dot per distinct coordinate, k petals
+          where k coincide, 1/8 inch, first vertical; facet, fit,
+          ellipse; pt_shape="sunflower" still routes there; by and a
+          vector refused with R's reasons.
+    - [x] messages: a list by= (channel reason), by on contour/smooth
+          (joint-density reason), a vector against a categorical
+          variable names Chart(form="dot").
+    - [x] console report (x_console.py), ports of .plt.txt(): the
+          scatter suggestions (R's two coin flips kept), Mahalanobis
+          block ("squared"), .cr.main brief correlation, the fit text
+          (lm line, loess MSE alone, curved fits on the linearized
+          data), by: fits per group without correlation, facets: the
+          x summary, run chart: untitled summary + run analysis with
+          R's exact lines, series suggestions. 16 of 19 cases line-
+          identical to R; deliberate: multi-x reports every variable
+          (R kept only the last, and skipped the fits), facet summary
+          decimals at least 2 (as X()), and suggestions in Python.
+    - [x] scale_x/scale_y: (min, max, n) is n intervals, n + 1 ticks,
+          as R's axTicks(axp=) (X() too). Closes the open off-by-one.
+    - [x] StockPrice data refreshed from lessR (now to Sep 2026).
+    - Not ported: legend_title for a pt_size legend (lessPy has no
+      variable pt_size); gray-theme series grays (by colors do not yet
+      follow themes); lessR's own fixes to base-graphics margins.
+    - lessR defects found: multi-x correlation/fit report (above);
+      XY(facet=) prints the x summary at the data's own decimals
+      (0 for Years), unlike X()'s fix.
+
+43. **details() storage flag** (October 2026). A whole-number column
+    that pandas stores as float64 (any NaN forces it) is still
+    reported as integer, matching lessR, but now flagged `integer*`
+    with a note under the table that pandas stores it as float64,
+    usually because of missing values. Prompted by the 522 Wrangle
+    reading, which had to explain the mismatch. The reading's float64
+    sentence can shrink once 0.3.0 is released and installed in
+    `lesspy` (the reading renders with the released version).
+
+44. **Group colors follow the theme in X() and XY()** (October 2026).
+    `by=` groups had always drawn the default hues (BASE_COLORS),
+    whatever the theme; Chart() already followed it. New
+    plotly_utils.theme_palette() = R's .get_fill() (hues for the
+    default theme, else the theme's sequential palette) and
+    by_colors(n) = .color_range(.get_fill(theme), n), two grays as
+    gray60/gray30. Used by the histogram, density, frequency polygon
+    (single and faceted), VBS strip points, and XY scatter, faceted
+    scatter, faceted time series, and the multi-series overlay, as R's
+    X.R and .plt.colors() do. 54 theme x n combinations identical to
+    lessR (tests/test_by_colors.py). Default theme unchanged. Closes the
+    gray-theme series-color item left open in item 42. Not changed:
+    the per-panel box hues of a faceted VBS.
+
+45. **Analysis figures display in a notebook** (October 2026). The
+    analyses (Regression, Logit, ANOVA, ttest, Correlation and the
+    cor* functions, prob_*, sim*) kept their figures only in .plots,
+    so on Colab `r = lp.Regression(...)` showed none. utils.show_plots()
+    now displays them as the analysis runs when a notebook kernel is
+    present (IPython display(), as a returned Chart() figure); scripts
+    and the terminal are unchanged. A display failure warns and keeps
+    the result. Verified in a kernel for every design. Released in 0.3.0.

@@ -11,6 +11,8 @@
 
 import numpy as np
 
+from .utils import show_plots
+
 
 class ProbZnormResults:
     """Result of prob_znorm(): mu/sigma and the plotly figure in
@@ -46,7 +48,7 @@ def prob_znorm(mu=0, sigma=1, color_border="gray10", r=0.10,
            f"{round(b * 255)},{a})"
 
     fig = _plot(mu, sigma, border, fill, main, y_axis, z)
-    return ProbZnormResults(mu=mu, sigma=sigma, plots={"znorm": fig})
+    return show_plots(ProbZnormResults(mu=mu, sigma=sigma, plots={"znorm": fig}))
 
 
 def _gray_to_hex(color):

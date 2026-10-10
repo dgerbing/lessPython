@@ -11,7 +11,7 @@
 import numpy as np
 import pandas as pd
 
-from .utils import get_option
+from .utils import get_option, show_plots
 
 # R hclust method -> scipy linkage method. scipy 'ward' is R's
 # ward.D2 (squared updates); ward.D has no scipy equivalent, so
@@ -70,7 +70,7 @@ def corReorder(R, order="hclust", hclust_type="complete",
             pass
     out.attrs["plots"] = plots
     out.attrs["order"] = label
-    return out
+    return show_plots(out)
 
 
 def _chain(S, nv, first):

@@ -17,6 +17,43 @@ BASE_COLORS = [
     "#00A3BA", "#D26FAF", "#00A76F", "#BD76CB",
 ]
 
+
+def theme_palette(theme=None):
+    """The palette a color theme gives to groups. R analog: .get_fill()
+    (not divergent): the qualitative hues for the default theme, else a
+    sequential palette in the theme's hue."""
+    from .utils import get_option
+    if theme is None:
+        theme = get_option("theme", "colors")
+    if theme == "colors":
+        return "hues"
+    for pal, members in (
+            ("grays", ("gray", "white")),
+            ("blues", ("lightbronze", "dodgerblue", "blue")),
+            ("browns", ("gold", "brown", "sienna")),
+            ("rusts", ("orange",)),
+            ("reds", ("darkred", "red", "rose", "slatered")),
+            ("greens", ("darkgreen", "green")),
+            ("violets", ("purple",))):
+        if theme in members:
+            return pal
+    return "blues"
+
+
+def by_colors(n, theme=None):
+    """One color per group of a by variable under the current theme,
+    as X() and XY() draw them. R analog: .color_range(.get_fill(theme),
+    n), two grays set apart as gray60 and gray30."""
+    pal = theme_palette(theme)
+    if pal == "hues":
+        return [BASE_COLORS[i % len(BASE_COLORS)] for i in range(n)]
+    if pal == "grays" and n == 2:
+        return ["#999999", "#4D4D4D"]
+    from .getColors import getColors
+    cols = getColors(pal, n=max(1, n), quiet=True)
+    return [c[:7] if len(c) == 9 else c for c in cols]
+
+
 # minimal named-color table; R's col2rgb() knows all R names, but
 # plotly accepts CSS names directly so unknowns pass through as-is
 _NAMED = {

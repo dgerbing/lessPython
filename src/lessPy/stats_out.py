@@ -191,7 +191,7 @@ def md_outliers(xv, yv, ids, MD_cut, out_cut):
     n_lines = min(len(out_idx) + 3, len(dst))
     w_id = max(len(s) for s in ids)
     w_md = max(len(fmt(d, 2)) for d in dst)
-    lines = [">>> Outlier analysis with Mahalanobis Distance",
+    lines = [">>> Outlier analysis with squared Mahalanobis Distance",
              "",
              f"{'MD':>{w_md}} {'ID':>{w_id + 1}}",
              f"{'-----':>{w_md}} {'-----':>{w_id + 1}}"]
@@ -202,7 +202,7 @@ def md_outliers(xv, yv, ids, MD_cut, out_cut):
         lines.append(f"{fmt(dst[j], 2):>{w_md}} "
                      f"{ids[j]:>{w_id + 1}}")
     if n_lines < len(dst):
-        lines.append(f"{'...':>{w_md}} {'...':>{w_id + 1}}")
+        lines.append(f"{'...':>{w_md - 1}} {'...':>{w_id + 2}}")
     return out_idx, lines
 
 

@@ -76,7 +76,11 @@ of functions, grouped by category for navigation:
 
 The inferential functions print their analysis as in lessR and
 also return a results object whose numeric fields and plotly
-figures (in `.plots`) are available for programmatic use.
+figures (in `.plots`) are available for programmatic use. In a
+notebook, such as Jupyter or Colab, the figures also display
+when the analysis runs, even when the result is assigned, as
+`r = lp.Regression(...)`. From a script, show one with
+`r.plots["scatter"].show()`.
 
 ## Development install
 

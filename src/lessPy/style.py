@@ -22,7 +22,7 @@ _SIZE_KEYS = ("main_size", "lab_size", "lab_x_size", "lab_y_size",
 #   and console settings, and parameters that lessPy takes in the call
 #   of the visualization function instead
 _R_ONLY = ("results", "explain", "interpret", "document", "code",
-           "width", "show", "lessR.use_plotly", "notes", "suggest",
+           "width", "show", "lessR.use_plotly", "notes",
            "brief", "offset", "rotate_x", "rotate_y", "labels",
            "labels_size", "labels_digits", "labels_position")
 
@@ -33,7 +33,8 @@ _BASELINE = copy.deepcopy(utils._OPTIONS)
 
 def _style_keys():
     keys = set(THEMES["colors"]["none"]) | set(_SIZE_KEYS)
-    keys |= {"quiet", "digits_d", "n_cat", "grid_col", "legend_border"}
+    keys |= {"quiet", "suggest", "digits_d", "n_cat", "grid_col",
+             "legend_border"}
     return keys
 
 

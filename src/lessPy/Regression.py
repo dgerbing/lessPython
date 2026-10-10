@@ -31,8 +31,9 @@
 # Numerics through statsmodels OLS (imported lazily, as
 # plt_forecast does); influence measures from OLSInfluence.
 # Returns a RegressionResults object holding the tables as
-# DataFrames and the plotly figures in .plots — figures are
-# not auto-shown (no R graphics device to open).
+# DataFrames and the plotly figures in .plots. In a notebook the
+# figures also display as the analysis runs, as lessR draws them;
+# in a script they are not shown (utils.show_plots).
 
 import math
 import re
@@ -49,7 +50,8 @@ from .plotly_utils import (
     BASE_COLORS, as_plotly_color, axis_format, axis_num,
     make_trans, plot_border, plotly_style, to_hex, x_grid)
 from .utils import (
-    category_order, fmt, get_column, get_option, pretty)
+    category_order, fmt, get_column, get_option, pretty,
+    show_plots)
 from .X import _breaks_from_args
 
 
@@ -1001,7 +1003,7 @@ def Regression(my_formula, data=None, filter=None, digits_d=None,
                 Rmd_browser, results, explain, interpret, code,
                 n_res_rows, n_pred_rows, res_sort, d)
 
-    return out
+    return show_plots(out)
 
 
 def _reg_kfold(yv, Xd, y_name, pred_names, n_keep, formula,

@@ -63,8 +63,8 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
 
     if facet is not None:
         if fill_miss and by is not None:
-            from .plotly_utils import BASE_COLORS
-            fill = BASE_COLORS
+            from .plotly_utils import by_colors
+            fill = by_colors(len(pd.Series(by).dropna().unique()))
         return _dn_facet(x, facet, facet_order, x_name,
                          facet_name, fill, x_lab, y_lab, main,
                          h, n, fill_area, style_opts,
@@ -93,8 +93,8 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
 
     # groups need distinguishable hues: default to the palette
     if fill_miss and G > 1:
-        from .plotly_utils import BASE_COLORS
-        fill = BASE_COLORS
+        from .plotly_utils import by_colors
+        fill = by_colors(G)
 
     def group_x(gname):
         xg = x if by is None else x[(by == gname).to_numpy()]
@@ -126,6 +126,11 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
     dx = grid[1] - grid[0]
 
     # --- densities per group -------------------------------------
+    # R analog: dn.plotly.R — kind "normal"/"both" adds the normal
+    # fit to each group by its own mean and sd on the shared grid;
+    # a group of identical values has no normal to draw
+    do_gen = kind in ("general", "both")
+    do_nrm = kind in ("normal", "both")
     dens = []
     ymax = 0.0
     for gname in groups:
@@ -135,19 +140,21 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
             [[0], np.cumsum((y[1:] + y[:-1]) * 0.5 * dx)])
         if cum[-1] > 0:
             cum = cum / cum[-1]
-        dens.append(dict(y=y, cum=cum, mn=float(xg.mean())))
-        ymax = max(ymax, float(y.max()))
+        sd = float(xg.std(ddof=1))
+        nrm = None
+        if do_nrm and np.isfinite(sd) and sd > 0:
+            z = (grid - float(xg.mean())) / sd
+            nrm = np.exp(-0.5 * z * z) / (sd * np.sqrt(2 * np.pi))
+        dens.append(dict(y=y, cum=cum, mn=float(xg.mean()), nrm=nrm))
+        # only a curve that is drawn sets the height of the y-axis
+        if do_gen:
+            ymax = max(ymax, float(y.max()))
+        if nrm is not None:
+            ymax = max(ymax, float(nrm.max()))
 
-    # --- normal curve and background histogram --------------------
-    # R analog: dn.main.R — kind "normal"/"both" adds the normal
-    # curve at the sample mean and sd; show_histogram draws a
-    # faint density-scaled histogram behind the curves
-    d_nrm = None
-    if kind in ("normal", "both"):
-        xg0 = group_x(groups[0])
-        mu, sd = float(xg0.mean()), float(xg0.std(ddof=1))
-        z = (grid - mu) / sd
-        d_nrm = np.exp(-0.5 * z * z) / (sd * np.sqrt(2 * np.pi))
+    # --- background histogram -------------------------------------
+    # show_histogram draws a faint density-scaled histogram behind
+    # the curves (dn.main.R)
     hist_y = None
     if show_histogram and hist_edges is not None:
         e = np.asarray(hist_edges, dtype=float)
@@ -157,10 +164,6 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
             hist_w = np.diff(e)
             hist_y = cnt / (tot * hist_w)  # density scale
             hist_mids = (e[:-1] + e[1:]) / 2
-    if kind == "normal":               # general curve not drawn
-        ymax = 0.0
-    if d_nrm is not None:
-        ymax = max(ymax, float(d_nrm.max()))
     if hist_y is not None:
         ymax = max(ymax, float(hist_y.max()))
 
@@ -197,12 +200,16 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
                 if fill_hist is None else fill_hist),
                 line=dict(width=0)),
             hoverinfo="skip", showlegend=False))
-    if kind in ("general", "both"):
-        for g, gname in enumerate(groups):
-            d = dens[g]
-            hv = hover(d)
-            if G > 1 and by_name:
-                hv = [f"{by_name}: {gname}<br>{t}" for t in hv]
+    # the normal curve: its own color for a single distribution, but
+    # the group's color when there are groups to keep apart, dashed
+    # beside that group's general curve (dn.plotly.R)
+    nrm_fill = (None if fill_normal in (None, "transparent")
+                else as_plotly_color(fill_normal))
+    for g, gname in enumerate(groups):
+        d = dens[g]
+        pre = (f"{by_name}: {gname}<br>"
+               if G > 1 and by_name else "")
+        if do_gen:
             fig.add_trace(go.Scatter(
                 mode="lines",
                 x=grid, y=d["y"],
@@ -211,29 +218,40 @@ def dn_plotly(x, by=None, x_name=None, by_name=None,
                 fill="tozeroy" if fill_area else "none",
                 fillcolor=fill_rgba[g] if fill_area else None,
                 hoverinfo="text",
-                hovertext=hv,
+                hovertext=[pre + t for t in hover(d)],
                 showlegend=G > 1,
             ))
-            # vertical line at the group mean, up to the curve
-            y_mn = float(np.interp(d["mn"], grid, d["y"]))
-            mean_line = dict(color=line_rgba[g], dash="dash",
-                             width=1.4 if fill_area else 0.7)
+        if d["nrm"] is not None:
+            nrm_col = line_rgba[g] if G > 1 else to_hex(color_normal)
+            filled = fill_area and G == 1 and nrm_fill is not None
             fig.add_trace(go.Scatter(
-                mode="lines",
-                x=[d["mn"], d["mn"]], y=[0, y_mn],
-                line=mean_line,
-                hoverinfo="skip", showlegend=False,
+                mode="lines", x=grid, y=d["nrm"],
+                name=(None if G == 1 else
+                      f"{gname} normal" if do_gen else gname),
+                showlegend=G > 1 and not do_gen,
+                line=dict(color=nrm_col, width=1.4,
+                          dash="dash" if do_gen and G > 1
+                          else "solid"),
+                fill="tozeroy" if filled else "none",
+                fillcolor=nrm_fill if filled else None,
+                hoverinfo="text",
+                hovertext=[
+                    f"{pre}{x_name}: {grid[i]:.6g}"
+                    f"<br>Normal density="
+                    f"{round(float(d['nrm'][i]), 6):g}"
+                    for i in range(n)],
             ))
-    if d_nrm is not None:              # normal curve
-        nrm_fill = (None if fill_normal in (None, "transparent")
-                    else as_plotly_color(fill_normal))
+        # vertical line at the group mean, up to whichever curve
+        # is drawn
+        curve = d["y"] if do_gen or d["nrm"] is None else d["nrm"]
+        y_mn = float(np.interp(d["mn"], grid, curve))
         fig.add_trace(go.Scatter(
-            mode="lines", x=grid, y=d_nrm,
-            line=dict(color=to_hex(color_normal),
-                      width=1.35 if nrm_fill is None else 1),
-            fill="none" if nrm_fill is None else "tozeroy",
-            fillcolor=nrm_fill,
-            hoverinfo="skip", showlegend=False))
+            mode="lines",
+            x=[d["mn"], d["mn"]], y=[0, y_mn],
+            line=dict(color=line_rgba[g], dash="dash",
+                      width=1.4 if fill_area else 0.7),
+            hoverinfo="skip", showlegend=False,
+        ))
     if rug:                            # ticks at each data value
         xr, yr = [], []
         y1r = -0.05 * ymax

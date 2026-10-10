@@ -9,7 +9,7 @@
 
 import numpy as np
 
-from .utils import fmt
+from .utils import fmt, show_plots
 
 _BG = "#F9F9FC"             # rgb(249,249,252)
 _TAIL = "#8B475D"           # palevioletred4
@@ -51,8 +51,8 @@ def prob_tcut(df, alpha=0.05, digits_d=3, y_axis=False,
                 fill, color_tail, nrm_color, color_t)
 
     print(f"Probability:  {cutoff}")
-    return ProbTcutResults(cutoff=cutoff, df=df, alpha=alpha,
-                           plots={"tcut": fig})
+    return show_plots(ProbTcutResults(cutoff=cutoff, df=df, alpha=alpha,
+                           plots={"tcut": fig}))
 
 
 def _cut_line(fig, x, top, color):

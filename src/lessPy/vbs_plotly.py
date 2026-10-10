@@ -200,9 +200,10 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
     strip = "s" in vbs_plot
 
     # grouped replication measures, .param.VBS() group branch;
-    # by and facet share the branch, as .param.VBS() does
-    grp = by if by is not None else facet
-    grp_ord = by_order if by is not None else facet_order
+    # by and facet share the branch, the facet levels when both are
+    # given (.param.VBS(): facet1 <- by0 only when facet1 is missing)
+    grp = facet if facet is not None else by
+    grp_ord = facet_order if facet is not None else by_order
     if grp is not None:
         mx_gc = max((grp == nm).sum() for nm in grp_ord)
         mc_w = max(int(np.unique(x[grp == nm],
@@ -210,7 +211,9 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
                    for nm in grp_ord if (grp == nm).any())
         reps = (n - n_ux) / n > 0.15 and mc_w > 0.05 * n
 
-    # jitter_x breaks ties in the data itself, as in X.R
+    # jitter_x breaks ties in the data itself, as in X.R; the violin
+    # bandwidth is read from the data as given, as .param.VBS() does
+    x_given = x.copy()
     if jitter_x is None:
         if grp is None:
             jitter_x = 1.1 * (1 - np.exp(-0.03 * mx_c))
@@ -263,6 +266,14 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
     vpart = f"%{{x:{val_fmt}}}" if val_fmt else "%{x}"
     rng_ = np.random.default_rng(n)      # reproducible spread
     jy = 0.5 if jitter_y is None else float(jitter_y)
+    # the values plotted, for X()'s "Parameter values" report; one
+    # bandwidth only when one violin is drawn (facets take their own)
+    from .stats_out import record_stats
+    record_stats(pt_size=float(cex), out_size=float(out_cex),
+                 jitter_x=float(jitter_x), jitter_y=jy,
+                 bw=(float(bw) if bw is not None else
+                     float(band_width(x_given, bw_iter)) if facet is None
+                     else None))
 
     # facet units, first level in the TOP band (reading order, as
     # lessR as.table=TRUE); facet2 stacks one section of facet
@@ -326,7 +337,7 @@ def vbs_plotly(x, x_name=None, vbs_plot="vbs",
         # violin: mirrored KDE, max width = vbs_ratio
         if violin and len(xu) > 1:
             h = (bw if bw is not None
-                 else band_width(xu, bw_iter))
+                 else band_width(x_given[um], bw_iter))
             grid = np.linspace(xu.min() - 3 * h,
                                xu.max() + 3 * h, 512)
             dens = kde(xu, grid, h)

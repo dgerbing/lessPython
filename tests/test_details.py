@@ -75,3 +75,17 @@ def test_errors():
         details()
     with pytest.raises(ValueError, match="no rows or no columns"):
         details(pd.DataFrame())
+
+
+def test_flags_whole_numbers_stored_as_float(capsys):
+    # pandas stores an integer column with NaN as float64: reported as
+    # integer (as lessR), flagged with * and a note on the storage
+    import lessPy as lp
+    d = lp.read_data("Employee")
+    lp.details(d, brief=True)
+    out = capsys.readouterr().out
+    assert "Years     integer*" in out
+    assert "Plan      integer " in out           # true int64: no flag
+    assert "stored by Pandas as float64" in out
+    lp.details(d[["Plan", "Pre"]], brief=True)
+    assert "float64" not in capsys.readouterr().out
